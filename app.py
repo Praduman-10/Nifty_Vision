@@ -42,7 +42,13 @@ def make_chart(d,ps,frame,show_ema,show_vwap):
  f.update_layout(height=650,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',xaxis_rangeslider_visible=True,xaxis_rangeslider_thickness=.07,xaxis=dict(rangeselector=dict(buttons=buttons,bgcolor='#111',activecolor='#333',font=dict(color='#ddd'))),margin=dict(l=10,r=10,t=45,b=10),hovermode='x unified');f.update_yaxes(side='right');return f
 st_autorefresh(interval=30000,key='nv_refresh');st.sidebar.markdown('**NIFTY VISION**')
 if not TOKEN:st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.');st.stop()
-frame=st.sidebar.selectbox('TIMEFRAME',FRAMES,index=2);n=st.sidebar.slider('CANDLES',50,1000,300,10);show_ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);show_vwap=st.sidebar.checkbox('VWAP',True);show=st.sidebar.checkbox('Candle Patterns',True)
+frame=st.sidebar.selectbox('TIMEFRAME',FRAMES,index=2)
+# Load enough history for the selected timeframe; the chart's range slider controls the visible window.
+def candle_limit(frame):
+ return {'1 min':1000,'3 min':1000,'5 min':1000,'15 min':1000,'30 min':1000,'1 hour':1000,'1 day':1000}[frame]
+n=candle_limit(frame)
+st.sidebar.caption(f'{n:,} candles available for {frame}')
+show_ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);show_vwap=st.sidebar.checkbox('VWAP',True);show=st.sidebar.checkbox('Candle Patterns',True)
 try:raw,source=load_for_dashboard(frame,n);d=indicators(raw.tail(n),frame)
 except Exception as e:st.error(f'Market data failed: {type(e).__name__}: {e}');st.stop()
 if len(d)<2:st.info('No stored candles yet. Run the historical backfill.');st.stop()
