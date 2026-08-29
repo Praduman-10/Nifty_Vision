@@ -47,9 +47,10 @@ st_autorefresh(interval=30000,key='nv_refresh');st.sidebar.markdown('**NIFTY VIS
 if not TOKEN:st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.');st.stop()
 frame=st.sidebar.radio('TIMEFRAME',FRAMES,index=2)
 max_candles=1000
-st.sidebar.caption(f'{max_candles:,} candles loaded • scroll/zoom chart to explore')
+n=st.sidebar.select_slider('CANDLES',options=[10,50,100,150,200,300,400,500,600,700,1000],value=300)
+st.sidebar.caption(f'{max_candles:,} candles loaded • showing {n:,}')
 show_ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);show_vwap=st.sidebar.checkbox('VWAP',True);show_sr=st.sidebar.checkbox('Support / Resistance',True);show=st.sidebar.checkbox('Candle Patterns',True)
-try:raw,source=load_for_dashboard(frame,max_candles);d=indicators(raw,frame)
+try:raw,source=load_for_dashboard(frame,max_candles);d=indicators(raw.tail(n),frame)
 except Exception as e:st.error(f'Market data failed: {type(e).__name__}: {e}');st.stop()
 if len(d)<2:st.info('No stored candles yet. Run the historical backfill.');st.stop()
 ps=patterns(d) if show else [];d,structure=market_structure(d);score=signal_score(structure,ps);last,prev=d.iloc[-1],d.iloc[-2];chg=last.close-prev.close;pct=chg/prev.close*100;v=float(last.vwap) if np.isfinite(last.vwap) else float(last.close);bias=structure['trend'];bc='green' if bias=='BULLISH' else 'red' if bias=='BEARISH' else 'amber';(s1,s2),(r1,r2)=zones(d)
