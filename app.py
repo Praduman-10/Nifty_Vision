@@ -10,10 +10,8 @@ FRAMES=['1 min','3 min','5 min','15 min','30 min','1 hour','1 day']
 st.markdown('''<style>.stApp{background:#050505;color:#f5f5f5}.block-container{max-width:1800px;padding-top:2.5rem!important}[data-testid="stSidebar"]{background:#090909;border-right:1px solid #252525}.k{font-size:.65rem;font-weight:800;letter-spacing:2px;color:#777}.title{font-size:2.5rem;font-weight:950;letter-spacing:-2px}.sub{color:#707070;font-size:.75rem}.card{background:#0d0d0d;border:1px solid #292929;border-radius:14px;padding:14px}.lab{font-size:.6rem;color:#777;font-weight:800;letter-spacing:1px}.val{font-size:1.3rem;font-weight:900;margin-top:5px}.green{color:#00e676}.red{color:#ff5252}.amber{color:#ffc107}.panel{background:#0b0b0b;border:1px solid #252525;border-radius:15px;padding:16px}.pt{font-size:.72rem;font-weight:900;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px}.read{font-size:.76rem;color:#999;line-height:1.55}.status{display:inline-block;border:1px solid #303030;border-radius:999px;padding:5px 10px;font-size:.62rem;font-weight:800;letter-spacing:.7px;color:#aaa}</style>''',unsafe_allow_html=True)
 def indicators(d,frame):
  d=d.copy();d['ema9']=d.close.ewm(span=9,adjust=False,min_periods=1).mean();d['ema20']=d.close.ewm(span=20,adjust=False,min_periods=1).mean();d['ema50']=d.close.ewm(span=50,adjust=False,min_periods=1).mean();d['session']=d.ts.dt.date;tp=(d.high+d.low+d.close)/3;vol=pd.to_numeric(d.volume,errors='coerce').fillna(0)
- if frame=='1 day':
-  cv=vol.cumsum();d['vwap']=(tp*vol).cumsum().div(cv.replace(0,np.nan))
- else:
-  vv=vol.groupby(d.session).cumsum();d['vwap']=(tp*vol).groupby(d.session).cumsum().div(vv.replace(0,np.nan))
+ if frame=='1 day':cv=vol.cumsum();d['vwap']=(tp*vol).cumsum().div(cv.replace(0,np.nan))
+ else:vv=vol.groupby(d.session).cumsum();d['vwap']=(tp*vol).groupby(d.session).cumsum().div(vv.replace(0,np.nan))
  delta=d.close.diff();gain=delta.clip(lower=0).ewm(alpha=1/14,adjust=False,min_periods=14).mean();loss=(-delta.clip(upper=0)).ewm(alpha=1/14,adjust=False,min_periods=14).mean();rs=gain.div(loss.replace(0,np.nan));d['rsi']=100-100/(1+rs);d.loc[(loss==0)&(gain>0),'rsi']=100;return d
 def patterns(d):
  out=[]
@@ -28,7 +26,10 @@ def patterns(d):
 def zones(d):
  x=d.tail(min(120,len(d)));price=float(x.close.iloc[-1]);ranges=(x.high-x.low).rolling(14,min_periods=1).mean();atr=float(ranges.iloc[-1]);
  if not np.isfinite(atr) or atr<=0:atr=max(float((x.high-x.low).median()),price*.001)
- w=max(3,min(7,max(1,len(x)//20)));lo=x.low.rolling(w,center=True,min_periods=1).min();hi=x.high.rolling(w,center=True,min_periods=1).max();s=x.loc[x.low.eq(lo),'low'].dropna();r=x.loc[x.high.eq(hi),'high'].dropna();sv=float(s[s<=price].max()) if not s[s<=price].empty else float(x.low.min());rv=float(r[r>=price].min()) if not r[r>=price].empty else float(x.high.max());h=atr*.35;return(sv-h,sv+h),(rv-h,rv+h)
+ w=max(3,min(7,max(1,len(x)//20)));lo=x.low.rolling(w,center=True,min_periods=1).min();hi=x.high.rolling(w,center=True,min_periods=1).max();s=x.loc[x.low.eq(lo),'low'].dropna();r=x.loc[x.high.eq(hi),'high'].dropna();below=s[s<=price];above=r[r>=price];sv=float(below.max()) if not below.empty else float(x.low.min());rv=float(above.min()) if not above.empty else float(x.high.max());
+ if rv<=price:rv=float(x.high.max())
+ if sv>=price:sv=float(x.low.min())
+ h=atr*.35;return(sv-h,sv+h),(rv-h,rv+h)
 def make_chart(d,ps,frame,show_ema,show_vwap):
  f=go.Figure(go.Candlestick(x=d.ts,open=d.open,high=d.high,low=d.low,close=d.close,name='NIFTY',increasing_line_color='#00e676',decreasing_line_color='#ff5252'))
  if show_ema:
@@ -37,9 +38,8 @@ def make_chart(d,ps,frame,show_ema,show_vwap):
  (s1,s2),(r1,r2)=zones(d);f.add_hrect(y0=s1,y1=s2,fillcolor='rgba(0,230,118,.12)',line_color='#00e676',annotation_text='SUPPORT');f.add_hrect(y0=r1,y1=r2,fillcolor='rgba(255,82,82,.12)',line_color='#ff5252',annotation_text='RESISTANCE')
  for i,n,dr,meaning in {p[1]:p for p in ps}.values():
   row=d.iloc[i];col='#00e676' if dr=='bullish' else '#ff5252' if dr=='bearish' else '#ffc107';f.add_annotation(x=row.ts,y=row.low if dr=='bullish' else row.high,text=n,showarrow=True,arrowhead=2,ay=30 if dr=='bullish' else -30,font=dict(color=col,size=10),arrowcolor=col,bgcolor='rgba(5,5,5,.85)',bordercolor=col,borderwidth=1)
- if frame=='1 day':buttons=[dict(count=1,label='1M',step='month',stepmode='backward'),dict(count=3,label='3M',step='month',stepmode='backward'),dict(count=6,label='6M',step='month',stepmode='backward'),dict(count=1,label='1Y',step='year',stepmode='backward'),dict(step='all',label='ALL')]
- else:buttons=[dict(count=1,label='1D',step='day',stepmode='backward'),dict(count=5,label='5D',step='day',stepmode='backward'),dict(count=1,label='1M',step='month',stepmode='backward'),dict(step='all',label='ALL')]
- f.update_layout(height=650,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',xaxis_rangeslider_visible=True,xaxis_rangeslider_thickness=0.07,xaxis=dict(rangeselector=dict(buttons=buttons,bgcolor='#111',activecolor='#333',font=dict(color='#ddd'))),margin=dict(l=10,r=10,t=45,b=10),hovermode='x unified');f.update_yaxes(side='right');return f
+ buttons=[dict(count=1,label='1M',step='month',stepmode='backward'),dict(count=3,label='3M',step='month',stepmode='backward'),dict(count=6,label='6M',step='month',stepmode='backward'),dict(count=1,label='1Y',step='year',stepmode='backward'),dict(step='all',label='ALL')] if frame=='1 day' else [dict(count=1,label='1D',step='day',stepmode='backward'),dict(count=5,label='5D',step='day',stepmode='backward'),dict(count=1,label='1M',step='month',stepmode='backward'),dict(step='all',label='ALL')]
+ f.update_layout(height=650,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',xaxis_rangeslider_visible=True,xaxis_rangeslider_thickness=.07,xaxis=dict(rangeselector=dict(buttons=buttons,bgcolor='#111',activecolor='#333',font=dict(color='#ddd'))),margin=dict(l=10,r=10,t=45,b=10),hovermode='x unified');f.update_yaxes(side='right');return f
 st_autorefresh(interval=30000,key='nv_refresh');st.sidebar.markdown('**NIFTY VISION**')
 if not TOKEN:st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.');st.stop()
 frame=st.sidebar.selectbox('TIMEFRAME',FRAMES,index=2);n=st.sidebar.slider('CANDLES',50,1000,300,10);show_ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);show_vwap=st.sidebar.checkbox('VWAP',True);show=st.sidebar.checkbox('Candle Patterns',True)
@@ -47,8 +47,8 @@ try:raw,source=load_for_dashboard(frame,n);d=indicators(raw.tail(n),frame)
 except Exception as e:st.error(f'Market data failed: {type(e).__name__}: {e}');st.stop()
 if len(d)<2:st.info('No stored candles yet. Run the historical backfill.');st.stop()
 ps=patterns(d) if show else [];d,structure=market_structure(d);score=signal_score(structure,ps);last,prev=d.iloc[-1],d.iloc[-2];chg=last.close-prev.close;pct=chg/prev.close*100;v=float(last.vwap) if np.isfinite(last.vwap) else float(last.close);bias=structure['trend'];bc='green' if bias=='BULLISH' else 'red' if bias=='BEARISH' else 'amber';(s1,s2),(r1,r2)=zones(d)
-st.markdown("<div class='k'>NIFTY 50 • PRICE ACTION</div><div class='title'>Nifty Vision</div>",unsafe_allow_html=True);st.markdown(f"<div class='sub'>{frame} • {last.ts.strftime('%d %b %Y %H:%M:%S %Z')} • <span class='status'>{source}</span></div>",unsafe_allow_html=True);st.divider();cols=st.columns(6)
-for c,(a,b,x) in zip(cols,[('NIFTY',f'{last.close:,.2f}',f'{chg:+.2f} ({pct:+.2f}%)'),('REGIME',bias,'EMA + VWAP + structure'),('SETUP',structure['setup'],'Market structure'),('SIGNAL',f'{score:+d} / 5','Pattern confirmation'),('RSI 14',f'{last.rsi:.1f}' if np.isfinite(last.rsi) else '—','Momentum'),('SUPPORT',f'{s1:,.0f}–{s2:,.0f}','Dynamic zone')]):c.markdown(f"<div class='card'><div class='lab'>{a}</div><div class='val {bc if a in ('REGIME','SIGNAL') else ''}'>{b}</div><div class='sub'>{x}</div></div>",unsafe_allow_html=True)
+st.markdown("<div class='k'>NIFTY 50 • PRICE ACTION</div><div class='title'>Nifty Vision</div>",unsafe_allow_html=True);st.markdown(f"<div class='sub'>{frame} • {last.ts.strftime('%d %b %Y %H:%M:%S %Z')} • <span class='status'>{source}</span></div>",unsafe_allow_html=True);st.divider();cols=st.columns(7)
+for c,(a,b,x) in zip(cols,[('NIFTY',f'{last.close:,.2f}',f'{chg:+.2f} ({pct:+.2f}%)'),('REGIME',bias,'EMA + VWAP + structure'),('SETUP',structure['setup'],'Market structure'),('SIGNAL',f'{score:+d} / 5','Pattern confirmation'),('RSI 14',f'{last.rsi:.1f}' if np.isfinite(last.rsi) else '—','Momentum'),('SUPPORT',f'{s1:,.0f}–{s2:,.0f}','Dynamic zone'),('RESISTANCE',f'{r1:,.0f}–{r2:,.0f}','Dynamic zone')]):c.markdown(f"<div class='card'><div class='lab'>{a}</div><div class='val {bc if a in ('REGIME','SIGNAL') else ''}'>{b}</div><div class='sub'>{x}</div></div>",unsafe_allow_html=True)
 left,right=st.columns([3.8,1.2],gap='large')
 with left:st.plotly_chart(make_chart(d,ps,frame,show_ema,show_vwap),use_container_width=True,config={'displaylogo':False,'scrollZoom':True})
 with right:
