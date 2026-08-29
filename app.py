@@ -46,8 +46,8 @@ st_autorefresh(interval=30000,key='nv_refresh');st.sidebar.markdown('**NIFTY VIS
 if not TOKEN:st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.');st.stop()
 frame=st.sidebar.selectbox('TIMEFRAME',FRAMES,index=2)
 max_candles=1000
-candle_choices=[50,100,150,200,300,400,500,600,700,1000]
-n=st.sidebar.selectbox('CANDLES',candle_choices,index=4)
+candle_choices=[10,50,100,150,200,300,400,500,600,700,1000]
+n=st.sidebar.select_slider('CANDLES',options=candle_choices,value=300)
 st.sidebar.caption(f'{max_candles:,} candles loaded • showing {n:,}')
 show_ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);show_vwap=st.sidebar.checkbox('VWAP',True);show_support=st.sidebar.checkbox('Support',True);show_resistance=st.sidebar.checkbox('Resistance',True);show=st.sidebar.checkbox('Candle Patterns',True)
 try:raw,source=load_for_dashboard(frame,max_candles);d=indicators(raw.tail(n),frame)
