@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 
-
 def market_structure(df, lookback=5):
     d=df.copy()
     if len(d)<3:return d, {'trend':'NEUTRAL','score':0,'setup':'INSUFFICIENT DATA'}
@@ -19,10 +18,14 @@ def market_structure(df, lookback=5):
     location='BREAKOUT' if last>high*0.999 and last>ema20 else 'BREAKDOWN' if last<low*1.001 and last<ema20 else 'RANGE'
     return d, {'trend':trend,'score':score,'setup':location,'range_high':high,'range_low':low}
 
-
 def signal_score(structure, patterns):
     score=int(structure.get('score',0))
-    for _,_,direction,_ in patterns[-10:]:
+    for p in patterns[-10:]:
+        if isinstance(p,dict):
+            direction=p.get('direction','neutral')
+        else:
+            try: direction=p[2]
+            except (IndexError,TypeError): direction='neutral'
         if direction=='bullish': score += 1
         elif direction=='bearish': score -= 1
     return max(-5,min(5,score))
