@@ -58,7 +58,7 @@ def chart(d,ema,vwap,sr,show_patterns,ps):
   for p in latest_unique_patterns(ps):
    row=d.iloc[p['i']];above=p['direction']!='bullish';col=pattern_color(p['direction']);f.add_annotation(x=row.ts,y=row.high if above else row.low,text=p['name'],showarrow=True,arrowhead=2,ay=-30 if above else 30,font=dict(size=10,color=col),arrowcolor=col,bgcolor='rgba(5,5,5,.82)',bordercolor=col,borderwidth=1,borderpad=3)
  f.update_layout(height=650,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',xaxis_rangeslider_visible=False,margin=dict(l=10,r=10,t=20,b=10),hovermode='x unified');f.update_xaxes(showgrid=False);f.update_yaxes(side='right',gridcolor='#171717');return f
-st_autorefresh(interval=30000,key='nv_refresh');st.sidebar.markdown('**NIFTY VISION**\n\nLIVE MARKET INTELLIGENCE')
+st_autorefresh(interval=30000,key='nv_refresh');st.sidebar.markdown('**NIFTY VISION**\n')
 if not TOKEN:st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.');st.stop()
 frame=st.sidebar.selectbox('TIMEFRAME',list(FRAMES),index=2);unit,interval=FRAMES[frame];n=st.sidebar.slider('CANDLES',50,500,180,10);ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);vwap=st.sidebar.checkbox('VWAP',True);sr=st.sidebar.checkbox('Support / Resistance',True);show_patterns=st.sidebar.checkbox('Candle Patterns',True)
 try:raw,mode=candles(unit,interval);d=add_indicators(raw.tail(n))
