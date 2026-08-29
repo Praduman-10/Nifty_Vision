@@ -3,8 +3,7 @@ from datetime import date,timedelta
 import numpy as np,pandas as pd,requests,plotly.graph_objects as go,streamlit as st
 from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title='Nifty Vision',page_icon='◈',layout='wide')
-TOKEN=st.secrets.get('UPSTOX_ACCESS_TOKEN',os.getenv('UPSTOX_ACCESS_TOKEN',''));KEY='NSE_INDEX|Nifty 50'
-FRAMES={'1 min':('minutes',1),'3 min':('minutes',3),'5 min':('minutes',5),'15 min':('minutes',15),'30 min':('minutes',30),'1 hour':('hours',1)}
+TOKEN=st.secrets.get('UPSTOX_ACCESS_TOKEN',os.getenv('UPSTOX_ACCESS_TOKEN',''));KEY='NSE_INDEX|Nifty 50';FRAMES={'1 min':('minutes',1),'3 min':('minutes',3),'5 min':('minutes',5),'15 min':('minutes',15),'30 min':('minutes',30),'1 hour':('hours',1)}
 st.markdown('''<style>.stApp{background:#050505;color:#f5f5f5}.block-container{max-width:1800px;padding-top:2.5rem!important}[data-testid="stSidebar"]{background:#090909;border-right:1px solid #252525}.k{font-size:.65rem;font-weight:800;letter-spacing:2px;color:#777}.title{font-size:2.5rem;font-weight:950;letter-spacing:-2px}.sub{color:#707070;font-size:.75rem}.card{background:#0d0d0d;border:1px solid #292929;border-radius:14px;padding:14px}.lab{font-size:.6rem;color:#777;font-weight:800;letter-spacing:1px}.val{font-size:1.3rem;font-weight:900;margin-top:5px}.green{color:#00e676}.red{color:#ff5252}.amber{color:#ffc107}.panel{background:#0b0b0b;border:1px solid #252525;border-radius:15px;padding:16px}.pt{font-size:.72rem;font-weight:900;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px}.read{font-size:.76rem;color:#999;line-height:1.55}.status{display:inline-block;border:1px solid #303030;border-radius:999px;padding:5px 10px;font-size:.62rem;font-weight:800;letter-spacing:.7px;color:#aaa}</style>''',unsafe_allow_html=True)
 def headers():return {'Accept':'application/json','Authorization':f'Bearer {TOKEN}'}
 def parse_candles(rows):
@@ -48,6 +47,8 @@ def chart(d,ema,vwap,sr,show_patterns):
  if sr:
   s,r=levels(d);f.add_hline(y=s,line_dash='dot',annotation_text=f'Support {s:,.0f}');f.add_hline(y=r,line_dash='dot',annotation_text=f'Resistance {r:,.0f}')
  if show_patterns:
+  # Keep one visual label per pattern occurrence; repeated occurrences are
+  # still allowed, but never duplicate the same pattern on the same candle.
   for p in detect_patterns(d):
    row=d.iloc[p['i']];above=p['name'] in ['SHOOTING STAR','DOJI','BEARISH ENGULFING','DARK CLOUD','BEARISH HARAMI'];f.add_annotation(x=row.ts,y=row.high if above else row.low,text=p['name'],showarrow=True,arrowhead=2,ay=-28 if above else 28,font=dict(size=9))
  f.update_layout(height=650,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',xaxis_rangeslider_visible=False,margin=dict(l=10,r=10,t=20,b=10),hovermode='x unified');f.update_xaxes(showgrid=False);f.update_yaxes(side='right',gridcolor='#171717');return f
@@ -65,8 +66,13 @@ with left:
  st.markdown("<div class='pt'>PRICE ACTION MAP</div>",unsafe_allow_html=True);st.plotly_chart(chart(d,ema,vwap,sr,show_patterns),use_container_width=True,config={'displaylogo':False,'scrollZoom':True});vol=go.Figure(go.Bar(x=d.ts,y=d.volume));vol.update_layout(height=140,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',margin=dict(l=10,r=10,t=0,b=0));st.plotly_chart(vol,use_container_width=True,config={'displaylogo':False})
 with right:
  st.markdown("<div class='panel'><div class='pt'>LIVE READ</div>",unsafe_allow_html=True);st.markdown(f"<div class='val {bc}'>{bias}</div><div class='read'>{'Price above VWAP with EMA alignment.' if bias=='BULLISH' else 'Price below VWAP with EMA alignment.' if bias=='BEARISH' else 'Signals are mixed; wait for confirmation.'}</div><br><div class='pt'>PATTERNS</div>",unsafe_allow_html=True)
- if ps:
-  for p in ps[-8:]:st.markdown(f"<div class='read'><b>{p['name']}</b><br>{p['meaning']}</div><br>",unsafe_allow_html=True)
+ # Right panel is unique by pattern name: each pattern is listed only once,
+ # even if it occurred several times within the visible chart.
+ unique_patterns=[]
+ for p in ps:
+  if p['name'] not in [x['name'] for x in unique_patterns]:unique_patterns.append(p)
+ if unique_patterns:
+  for p in unique_patterns:st.markdown(f"<div class='read'><b>{p['name']}</b><br>{p['meaning']}</div><br>",unsafe_allow_html=True)
  else:st.markdown('<div class="read">No recognised candle patterns in the visible chart.</div>',unsafe_allow_html=True)
  rv=float(last.rsi);state='Overbought' if rv>=70 else 'Oversold' if rv<=30 else 'Neutral';st.markdown(f"<br><div class='pt'>MOMENTUM</div><div class='read'>RSI <b>{rv:.1f}</b> — {state}.<br>EMA9 is {'above' if last.ema9>last.ema20 else 'below'} EMA20.<br>Close is {'above' if last.close>last.vwap else 'below'} VWAP.</div></div>",unsafe_allow_html=True)
 st.caption('Decision-support prototype only; rule-based signals are not investment advice.')
