@@ -7,7 +7,7 @@ from market_intelligence import market_structure,signal_score
 st.set_page_config(page_title='Nifty Vision',page_icon='◈',layout='wide')
 TOKEN=st.secrets.get('UPSTOX_ACCESS_TOKEN',os.getenv('UPSTOX_ACCESS_TOKEN',''))
 FRAMES=['1 min','3 min','5 min','15 min','30 min','1 hour','1 day']
-st.markdown('''<style>.stApp{background:#050505;color:#f5f5f5}.block-container{max-width:1800px;padding-top:2.5rem!important}[data-testid="stSidebar"]{background:#090909;border-right:1px solid #252525}.k{font-size:.65rem;font-weight:800;letter-spacing:2px;color:#777}.title{font-size:2.5rem;font-weight:950;letter-spacing:-2px}.sub{color:#707070;font-size:.75rem}.card{background:#0d0d0d;border:1px solid #292929;border-radius:14px;padding:14px}.lab{font-size:.6rem;color:#777;font-weight:800;letter-spacing:1px}.val{font-size:1.3rem;font-weight:900;margin-top:5px}.green{color:#00e676}.red{color:#ff5252}.amber{color:#ffc107}.panel{background:#0b0b0b;border:1px solid #252525;border-radius:15px;padding:16px}.pt{font-size:.72rem;font-weight:900;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px}.read{font-size:.76rem;color:#999;line-height:1.55}.status{display:inline-block;border:1px solid #303030;border-radius:999px;padding:5px 10px;font-size:.62rem;font-weight:800;letter-spacing:.7px;color:#aaa}.tf-wrap{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 14px}.tf-wrap button{background:#111;border:1px solid #333;color:#aaa;border-radius:8px;padding:7px 11px;font-weight:800;font-size:11px}</style>''',unsafe_allow_html=True)
+st.markdown('''<style>.stApp{background:#050505;color:#f5f5f5}.block-container{max-width:1800px;padding-top:2.5rem!important}[data-testid="stSidebar"]{background:#090909;border-right:1px solid #252525}.k{font-size:.65rem;font-weight:800;letter-spacing:2px;color:#777}.title{font-size:2.5rem;font-weight:950;letter-spacing:-2px}.sub{color:#707070;font-size:.75rem}.card{background:#0d0d0d;border:1px solid #292929;border-radius:14px;padding:14px}.lab{font-size:.6rem;color:#777;font-weight:800;letter-spacing:1px}.val{font-size:1.3rem;font-weight:900;margin-top:5px}.green{color:#00e676}.red{color:#ff5252}.amber{color:#ffc107}.panel{background:#0b0b0b;border:1px solid #252525;border-radius:15px;padding:16px}.pt{font-size:.72rem;font-weight:900;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px}.read{font-size:.76rem;color:#999;line-height:1.55}.status{display:inline-block;border:1px solid #303030;border-radius:999px;padding:5px 10px;font-size:.62rem;font-weight:800;letter-spacing:.7px;color:#aaa}</style>''',unsafe_allow_html=True)
 def indicators(d,frame):
  d=d.copy();d['ema9']=d.close.ewm(span=9,adjust=False,min_periods=1).mean();d['ema20']=d.close.ewm(span=20,adjust=False,min_periods=1).mean();d['ema50']=d.close.ewm(span=50,adjust=False,min_periods=1).mean();d['session']=d.ts.dt.date;tp=(d.high+d.low+d.close)/3;vol=pd.to_numeric(d.volume,errors='coerce').fillna(0)
  if frame=='1 day':cv=vol.cumsum();d['vwap']=(tp*vol).cumsum().div(cv.replace(0,np.nan))
@@ -45,21 +45,18 @@ def make_chart(d,ps,frame,show_ema,show_vwap,show_sr):
  f.update_layout(height=650,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',xaxis_rangeslider_visible=True,xaxis_rangeslider_thickness=.07,xaxis=dict(rangeselector=dict(buttons=buttons,bgcolor='#111',activecolor='#333',font=dict(color='#ddd'))),margin=dict(l=10,r=10,t=45,b=10),hovermode='x unified');f.update_yaxes(side='right');return f
 st_autorefresh(interval=30000,key='nv_refresh');st.sidebar.markdown('**NIFTY VISION**')
 if not TOKEN:st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.');st.stop()
-# Compact timeframe buttons in the sidebar
-frame=st.sidebar.radio('TIMEFRAME',FRAMES,index=2,horizontal=False)
+frame=st.sidebar.radio('TIMEFRAME',FRAMES,index=2)
 max_candles=1000
-candle_choices=[10,50,100,150,200,300,400,500,600,700,1000]
-n=st.sidebar.select_slider('CANDLES',options=candle_choices,value=300)
-st.sidebar.caption(f'{max_candles:,} candles loaded • showing {n:,}')
+st.sidebar.caption(f'{max_candles:,} candles loaded • scroll/zoom chart to explore')
 show_ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);show_vwap=st.sidebar.checkbox('VWAP',True);show_sr=st.sidebar.checkbox('Support / Resistance',True);show=st.sidebar.checkbox('Candle Patterns',True)
-try:raw,source=load_for_dashboard(frame,max_candles);d=indicators(raw.tail(n),frame)
+try:raw,source=load_for_dashboard(frame,max_candles);d=indicators(raw,frame)
 except Exception as e:st.error(f'Market data failed: {type(e).__name__}: {e}');st.stop()
 if len(d)<2:st.info('No stored candles yet. Run the historical backfill.');st.stop()
 ps=patterns(d) if show else [];d,structure=market_structure(d);score=signal_score(structure,ps);last,prev=d.iloc[-1],d.iloc[-2];chg=last.close-prev.close;pct=chg/prev.close*100;v=float(last.vwap) if np.isfinite(last.vwap) else float(last.close);bias=structure['trend'];bc='green' if bias=='BULLISH' else 'red' if bias=='BEARISH' else 'amber';(s1,s2),(r1,r2)=zones(d)
 st.markdown("<div class='k'>NIFTY 50 • PRICE ACTION</div><div class='title'>Nifty Vision</div>",unsafe_allow_html=True);st.markdown(f"<div class='sub'>{frame} • {last.ts.strftime('%d %b %Y %H:%M:%S %Z')} • <span class='status'>{source}</span></div>",unsafe_allow_html=True);st.divider();cols=st.columns(7)
 for c,(a,b,x) in zip(cols,[('NIFTY',f'{last.close:,.2f}',f'{chg:+.2f} ({pct:+.2f}%)'),('REGIME',bias,'EMA + VWAP + structure'),('SETUP',structure['setup'],'Market structure'),('SIGNAL',f'{score:+d} / 5','Pattern confirmation'),('RSI 14',f'{last.rsi:.1f}' if np.isfinite(last.rsi) else '—','Momentum'),('SUPPORT',f'{s1:,.0f}–{s2:,.0f}','Dynamic zone'),('RESISTANCE',f'{r1:,.0f}–{r2:,.0f}','Dynamic zone')]):c.markdown(f"<div class='card'><div class='lab'>{a}</div><div class='val {bc if a in ('REGIME','SIGNAL') else ''}'>{b}</div><div class='sub'>{x}</div></div>",unsafe_allow_html=True)
 left,right=st.columns([3.8,1.2],gap='large')
-with left:st.plotly_chart(make_chart(d,ps,frame,show_ema,show_vwap,show_sr),use_container_width=True,config={'displaylogo':False,'scrollZoom':True})
+with left:st.plotly_chart(make_chart(d,ps,frame,show_ema,show_vwap,show_sr),use_container_width=True,config={'displaylogo':False,'scrollZoom':True,'doubleClick':'reset'})
 with right:
  st.markdown("<div class='panel'><div class='pt'>LIVE READ</div>",unsafe_allow_html=True);st.markdown(f"<div class='val {bc}'>{bias}</div><div class='read'>Structure: <b>{structure['setup']}</b><br>Price is {'above' if last.close>v else 'below'} VWAP. EMA9 is {'above' if last.ema9>last.ema20 else 'below'} EMA20.</div><br><div class='pt'>PATTERNS</div>",unsafe_allow_html=True)
  latest={p[1]:p for p in ps}
