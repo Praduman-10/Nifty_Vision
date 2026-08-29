@@ -30,16 +30,8 @@ def candles(unit, interval):
     r.raise_for_status()
     rows = r.json().get('data', {}).get('candles', [])
     if rows: return parse_candles(rows), 'LIVE INTRADAY'
-
-    # Upstox V3 limits minute intervals <=15 to a maximum one-month window.
-    # Use a safe 28-day fallback so weekends/holidays never create an invalid range.
     to_date = date.today()
-    if unit == 'minutes' and interval <= 15:
-        days_back = 28
-    elif unit == 'minutes':
-        days_back = 80
-    else:
-        days_back = 80
+    days_back = 28 if unit == 'minutes' and interval <= 15 else 80
     from_date = to_date - timedelta(days=days_back)
     historical = f'https://api.upstox.com/v3/historical-candle/{KEY}/{unit}/{interval}/{to_date:%Y-%m-%d}/{from_date:%Y-%m-%d}'
     h = requests.get(historical, headers=headers(), timeout=20)
@@ -49,50 +41,71 @@ def candles(unit, interval):
     return parse_candles(hrows), 'LATEST HISTORICAL SESSION'
 
 def add_indicators(d):
-    d=d.copy();d['ema9']=d.close.ewm(span=9,adjust=False).mean();d['ema20']=d.close.ewm(span=20,adjust=False).mean();d['ema50']=d.close.ewm(span=50,adjust=False).mean();tp=(d.high+d.low+d.close)/3;d['vwap']=(tp*d.volume).cumsum()/d.volume.replace(0,np.nan).cumsum();delta=d.close.diff();gain=delta.clip(lower=0).ewm(alpha=1/14,adjust=False).mean();loss=(-delta.clip(upper=0)).ewm(alpha=1/14,adjust=False).mean();d['rsi']=100-100/(1+gain/loss.replace(0,np.nan));return d
+    d = d.copy()
+    d['ema9'] = d.close.ewm(span=9, adjust=False).mean()
+    d['ema20'] = d.close.ewm(span=20, adjust=False).mean()
+    d['ema50'] = d.close.ewm(span=50, adjust=False).mean()
+    # True session VWAP: reset cumulative price*volume and volume at each
+    # Indian trading date instead of carrying VWAP across multiple sessions.
+    d['session'] = d.ts.dt.date
+    tp = (d.high + d.low + d.close) / 3
+    pv = tp * d.volume.fillna(0)
+    cum_pv = pv.groupby(d['session']).cumsum()
+    cum_vol = d.volume.fillna(0).groupby(d['session']).cumsum()
+    d['vwap'] = cum_pv.div(cum_vol.replace(0, np.nan))
+    delta = d.close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+    d['rsi'] = 100 - 100 / (1 + gain / loss.replace(0, np.nan))
+    return d
 
 def patterns(d):
-    if len(d)<2:return []
-    b,c=d.iloc[-2],d.iloc[-1];body=abs(c.close-c.open);rng=max(c.high-c.low,1e-9);out=[]
-    if body/rng<.12:out.append(('DOJI','Indecision / possible reversal','amber'))
-    if b.close<b.open and c.close>c.open and c.open<=b.close and c.close>=b.open:out.append(('BULLISH ENGULFING','Bullish momentum reversal','green'))
-    if b.close>b.open and c.close<c.open and c.open>=b.close and c.close<=b.open:out.append(('BEARISH ENGULFING','Bearish momentum reversal','red'))
-    lower=min(c.open,c.close)-c.low;upper=c.high-max(c.open,c.close)
-    if lower>body*2 and upper<body*.8:out.append(('HAMMER','Demand rejection','green'))
-    if upper>body*2 and lower<body*.8:out.append(('SHOOTING STAR','Supply rejection','red'))
+    if len(d) < 2: return []
+    b, c = d.iloc[-2], d.iloc[-1]
+    body = abs(c.close - c.open); rng = max(c.high - c.low, 1e-9); out = []
+    if body / rng < .12: out.append(('DOJI','Indecision / possible reversal','amber'))
+    if b.close < b.open and c.close > c.open and c.open <= b.close and c.close >= b.open: out.append(('BULLISH ENGULFING','Bullish momentum reversal','green'))
+    if b.close > b.open and c.close < c.open and c.open >= b.close and c.close <= b.open: out.append(('BEARISH ENGULFING','Bearish momentum reversal','red'))
+    lower = min(c.open,c.close) - c.low; upper = c.high - max(c.open,c.close)
+    if lower > body * 2 and upper < body * .8: out.append(('HAMMER','Demand rejection','green'))
+    if upper > body * 2 and lower < body * .8: out.append(('SHOOTING STAR','Supply rejection','red'))
     return out
 
 def levels(d):
-    x=d.tail(40);return float(x.low.min()),float(x.high.max())
+    x = d.tail(40); return float(x.low.min()), float(x.high.max())
 
-def chart(d,ema,vwap,sr):
-    f=go.Figure(go.Candlestick(x=d.ts,open=d.open,high=d.high,low=d.low,close=d.close,name='NIFTY',increasing_line_color='#00e676',decreasing_line_color='#ff5252'))
+def chart(d, ema, vwap, sr):
+    f = go.Figure(go.Candlestick(x=d.ts, open=d.open, high=d.high, low=d.low, close=d.close, name='NIFTY', increasing_line_color='#00e676', decreasing_line_color='#ff5252'))
     if ema:
-        for c,n in [('ema9','EMA 9'),('ema20','EMA 20'),('ema50','EMA 50')]:f.add_trace(go.Scatter(x=d.ts,y=d[c],name=n,mode='lines',line=dict(width=1.3)))
-    if vwap:f.add_trace(go.Scatter(x=d.ts,y=d.vwap,name='VWAP',mode='lines',line=dict(width=1.5,dash='dot')))
+        for c,n in [('ema9','EMA 9'),('ema20','EMA 20'),('ema50','EMA 50')]: f.add_trace(go.Scatter(x=d.ts,y=d[c],name=n,mode='lines',line=dict(width=1.3)))
+    if vwap: f.add_trace(go.Scatter(x=d.ts,y=d.vwap,name='VWAP',mode='lines',line=dict(width=2,dash='dot')))
     if sr:
-        s,r=levels(d);f.add_hline(y=s,line_dash='dot',annotation_text=f'Support {s:,.0f}');f.add_hline(y=r,line_dash='dot',annotation_text=f'Resistance {r:,.0f}')
-    for n,_,_ in patterns(d):f.add_annotation(x=d.ts.iloc[-1],y=d.high.iloc[-1],text=n,showarrow=True,arrowhead=2,ay=-35)
-    f.update_layout(height=650,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',xaxis_rangeslider_visible=False,margin=dict(l=10,r=10,t=20,b=10),hovermode='x unified');f.update_xaxes(showgrid=False);f.update_yaxes(side='right',gridcolor='#171717');return f
+        s,r = levels(d); f.add_hline(y=s,line_dash='dot',annotation_text=f'Support {s:,.0f}'); f.add_hline(y=r,line_dash='dot',annotation_text=f'Resistance {r:,.0f}')
+    for n,_,_ in patterns(d): f.add_annotation(x=d.ts.iloc[-1],y=d.high.iloc[-1],text=n,showarrow=True,arrowhead=2,ay=-35)
+    f.update_layout(height=650,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',xaxis_rangeslider_visible=False,margin=dict(l=10,r=10,t=20,b=10),hovermode='x unified')
+    f.update_xaxes(showgrid=False); f.update_yaxes(side='right',gridcolor='#171717'); return f
 
 st_autorefresh(interval=30000,key='nv_refresh')
 st.sidebar.markdown('**NIFTY VISION**\n\nLIVE MARKET INTELLIGENCE')
-if not TOKEN:st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.');st.stop()
-frame=st.sidebar.selectbox('TIMEFRAME',list(FRAMES),index=2);unit,interval=FRAMES[frame];n=st.sidebar.slider('CANDLES',50,500,180,10);ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);vwap=st.sidebar.checkbox('VWAP',True);sr=st.sidebar.checkbox('Support / Resistance',True)
-try:raw,mode=candles(unit,interval);d=add_indicators(raw.tail(n))
-except Exception as e:st.error(f'Upstox feed failed: {type(e).__name__}: {e}');st.stop()
-if len(d)<2:st.error('Not enough candles returned to calculate the live analysis.');st.stop()
-last,prev=d.iloc[-1],d.iloc[-2];chg=last.close-prev.close;pct=chg/prev.close*100;s,r=levels(d);pats=patterns(d);bias='BULLISH' if last.close>last.ema20 and last.ema9>last.ema20 and last.close>last.vwap else ('BEARISH' if last.close<last.ema20 and last.ema9<last.ema20 and last.close<last.vwap else 'MIXED');bc='green' if bias=='BULLISH' else ('red' if bias=='BEARISH' else 'amber')
-st.markdown("<div class='k'>NIFTY 50 • LIVE PRICE ACTION</div><div class='title'>Nifty Vision</div>",unsafe_allow_html=True);st.markdown(f"<div class='sub'>Upstox • {frame} candles • {last.ts.strftime('%d %b %Y %H:%M:%S %Z')} &nbsp; <span class='status'>{mode}</span></div>",unsafe_allow_html=True);st.divider()
-cols=st.columns(5);items=[('NIFTY',f'{last.close:,.2f}',f'{chg:+.2f} ({pct:+.2f}%)'),('BIAS',bias,'EMA + VWAP composite'),('RSI 14',f'{last.rsi:.1f}','Momentum'),('SUPPORT',f'{s:,.0f}','Recent range low'),('RESISTANCE',f'{r:,.0f}','Recent range high')]
-for c,(a,b,x) in zip(cols,items):c.markdown(f"<div class='card'><div class='lab'>{a}</div><div class='val {bc if a=='BIAS' else ''}'>{b}</div><div class='sub'>{x}</div></div>",unsafe_allow_html=True)
+if not TOKEN: st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.'); st.stop()
+frame = st.sidebar.selectbox('TIMEFRAME',list(FRAMES),index=2); unit,interval = FRAMES[frame]
+n = st.sidebar.slider('CANDLES',50,500,180,10); ema = st.sidebar.checkbox('EMA 9 / 20 / 50',True); vwap = st.sidebar.checkbox('VWAP',True); sr = st.sidebar.checkbox('Support / Resistance',True)
+try: raw,mode = candles(unit,interval); d = add_indicators(raw.tail(n))
+except Exception as e: st.error(f'Upstox feed failed: {type(e).__name__}: {e}'); st.stop()
+if len(d)<2: st.error('Not enough candles returned to calculate the live analysis.'); st.stop()
+last,prev = d.iloc[-1],d.iloc[-2]; chg=last.close-prev.close; pct=chg/prev.close*100; s,r=levels(d); pats=patterns(d)
+bias='BULLISH' if last.close>last.ema20 and last.ema9>last.ema20 and last.close>last.vwap else ('BEARISH' if last.close<last.ema20 and last.ema9<last.ema20 and last.close<last.vwap else 'MIXED'); bc='green' if bias=='BULLISH' else ('red' if bias=='BEARISH' else 'amber')
+st.markdown("<div class='k'>NIFTY 50 • LIVE PRICE ACTION</div><div class='title'>Nifty Vision</div>",unsafe_allow_html=True); st.markdown(f"<div class='sub'>Upstox • {frame} candles • {last.ts.strftime('%d %b %Y %H:%M:%S %Z')} &nbsp; <span class='status'>{mode}</span></div>",unsafe_allow_html=True); st.divider()
+cols=st.columns(5); items=[('NIFTY',f'{last.close:,.2f}',f'{chg:+.2f} ({pct:+.2f}%)'),('BIAS',bias,'EMA + VWAP composite'),('RSI 14',f'{last.rsi:.1f}','Momentum'),('SUPPORT',f'{s:,.0f}','Recent range low'),('RESISTANCE',f'{r:,.0f}','Recent range high')]
+for c,(a,b,x) in zip(cols,items): c.markdown(f"<div class='card'><div class='lab'>{a}</div><div class='val {bc if a=='BIAS' else ''}'>{b}</div><div class='sub'>{x}</div></div>",unsafe_allow_html=True)
 left,right=st.columns([3.8,1.2],gap='large')
 with left:
- st.markdown("<div class='pt'>PRICE ACTION MAP</div>",unsafe_allow_html=True);st.plotly_chart(chart(d,ema,vwap,sr),use_container_width=True,config={'displaylogo':False,'scrollZoom':True});vol=go.Figure(go.Bar(x=d.ts,y=d.volume));vol.update_layout(height=140,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',margin=dict(l=10,r=10,t=0,b=0));st.plotly_chart(vol,use_container_width=True,config={'displaylogo':False})
+    st.markdown("<div class='pt'>PRICE ACTION MAP</div>",unsafe_allow_html=True); st.plotly_chart(chart(d,ema,vwap,sr),use_container_width=True,config={'displaylogo':False,'scrollZoom':True})
+    vol=go.Figure(go.Bar(x=d.ts,y=d.volume)); vol.update_layout(height=140,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',margin=dict(l=10,r=10,t=0,b=0)); st.plotly_chart(vol,use_container_width=True,config={'displaylogo':False})
 with right:
- st.markdown("<div class='panel'><div class='pt'>LIVE READ</div>",unsafe_allow_html=True);st.markdown(f"<div class='val {bc}'>{bias}</div><div class='read'>{'Price above VWAP with EMA alignment.' if bias=='BULLISH' else 'Price below VWAP with EMA alignment.' if bias=='BEARISH' else 'Signals are mixed; wait for confirmation.'}</div><br><div class='pt'>PATTERNS</div>",unsafe_allow_html=True)
- if pats:
-  for a,b,c in pats:st.markdown(f"<div class='read'><b class='{c}'>{a}</b><br>{b}</div><br>",unsafe_allow_html=True)
- else:st.markdown('<div class="read">No latest-bar candle pattern detected.</div>',unsafe_allow_html=True)
- rv=float(last.rsi);state='Overbought' if rv>=70 else 'Oversold' if rv<=30 else 'Neutral';st.markdown(f"<br><div class='pt'>MOMENTUM</div><div class='read'>RSI <b>{rv:.1f}</b> — {state}.<br>EMA9 is {'above' if last.ema9>last.ema20 else 'below'} EMA20.<br>Close is {'above' if last.close>last.vwap else 'below'} VWAP.</div></div>",unsafe_allow_html=True)
-st.caption('Decision-support prototype only; rule-based signals are not investment advice. During market closure, the chart uses the latest available Upstox historical session.')
+    st.markdown("<div class='panel'><div class='pt'>LIVE READ</div>",unsafe_allow_html=True); st.markdown(f"<div class='val {bc}'>{bias}</div><div class='read'>{'Price above VWAP with EMA alignment.' if bias=='BULLISH' else 'Price below VWAP with EMA alignment.' if bias=='BEARISH' else 'Signals are mixed; wait for confirmation.'}</div><br><div class='pt'>PATTERNS</div>",unsafe_allow_html=True)
+    if pats:
+        for a,b,c in pats: st.markdown(f"<div class='read'><b class='{c}'>{a}</b><br>{b}</div><br>",unsafe_allow_html=True)
+    else: st.markdown('<div class="read">No latest-bar candle pattern detected.</div>',unsafe_allow_html=True)
+    rv=float(last.rsi); state='Overbought' if rv>=70 else 'Oversold' if rv<=30 else 'Neutral'; st.markdown(f"<br><div class='pt'>MOMENTUM</div><div class='read'>RSI <b>{rv:.1f}</b> — {state}.<br>EMA9 is {'above' if last.ema9>last.ema20 else 'below'} EMA20.<br>Close is {'above' if last.close>last.vwap else 'below'} VWAP.</div></div>",unsafe_allow_html=True)
+st.caption('Decision-support prototype only; rule-based signals are not investment advice. VWAP is calculated per Indian trading session and uses the latest historical session when the market is closed.')
