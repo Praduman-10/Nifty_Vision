@@ -1,4 +1,5 @@
 # Nifty Vision
+https://niftyvision-ftpeepke5vofugekrc8zg5.streamlit.app/
 
 Nifty Vision is a Streamlit-based NIFTY 50 market-intelligence dashboard built around live market data from Upstox. It is designed to help a trader understand **what price is doing, where important levels are, which patterns are appearing, and what the options market is suggesting**.
 
