@@ -5,6 +5,7 @@ from streamlit_autorefresh import st_autorefresh
 from app_sqlite_patch import load_for_dashboard
 from market_intelligence import market_structure,signal_score
 from pattern_engine import detect_patterns
+from structure_engine import detect_structure
 st.set_page_config(page_title='Nifty Vision',page_icon='◈',layout='wide')
 TOKEN=st.secrets.get('UPSTOX_ACCESS_TOKEN',os.getenv('UPSTOX_ACCESS_TOKEN',''))
 FRAMES=['1 min','3 min','5 min','15 min','30 min','1 hour','1 day']
@@ -21,7 +22,7 @@ def zones(d):
  if rv<=price:rv=float(x.high.max())
  if sv>=price:sv=float(x.low.min())
  h=atr*.35;return(sv-h,sv+h),(rv-h,rv+h)
-def make_chart(d,ps,frame,show_ema,show_vwap,show_sr):
+def make_chart(d,ps,structure_events,frame,show_ema,show_vwap,show_sr,show_structure):
  f=go.Figure(go.Candlestick(x=d.ts,open=d.open,high=d.high,low=d.low,close=d.close,name='NIFTY',increasing_line_color='#00e676',decreasing_line_color='#ff5252'))
  if show_ema:
   for c,n in [('ema9','EMA 9'),('ema20','EMA 20'),('ema50','EMA 50')]:f.add_trace(go.Scatter(x=d.ts,y=d[c],name=n,mode='lines'))
@@ -29,6 +30,12 @@ def make_chart(d,ps,frame,show_ema,show_vwap,show_sr):
  (s1,s2),(r1,r2)=zones(d)
  if show_sr:
   f.add_hrect(y0=s1,y1=s2,fillcolor='rgba(0,230,118,.12)',line_color='#00e676',annotation_text='SUPPORT');f.add_hrect(y0=r1,y1=r2,fillcolor='rgba(255,82,82,.12)',line_color='#ff5252',annotation_text='RESISTANCE')
+ if show_structure:
+  for e in structure_events:
+   idx=e['index'];
+   if idx not in d.index:continue
+   row=d.loc[idx];typ=e['type'];bull=typ in ('HH','HL','BOS UP');col='#00e676' if bull else '#ff5252';y=float(row.high if typ in ('HH','LH','BOS UP','BOS DOWN') else row.low)
+   f.add_annotation(x=row.ts,y=y,text=typ,showarrow=True,arrowhead=2,ay=-25 if bull else 25,font=dict(color=col,size=9),arrowcolor=col,bgcolor='rgba(5,5,5,.85)',bordercolor=col,borderwidth=1)
  for p in ps:
   row=d.iloc[p['index']];dr=p['direction'];col='#00e676' if dr=='bullish' else '#ff5252' if dr=='bearish' else '#ffc107';f.add_annotation(x=row.ts,y=row.low if dr=='bullish' else row.high,text=p['name'],showarrow=True,arrowhead=2,ay=30 if dr=='bullish' else -30,font=dict(color=col,size=10),arrowcolor=col,bgcolor='rgba(5,5,5,.85)',bordercolor=col,borderwidth=1)
  buttons=[dict(count=1,label='1M',step='month',stepmode='backward'),dict(count=3,label='3M',step='month',stepmode='backward'),dict(count=6,label='6M',step='month',stepmode='backward'),dict(count=1,label='1Y',step='year',stepmode='backward'),dict(step='all',label='ALL')] if frame=='1 day' else [dict(count=1,label='1D',step='day',stepmode='backward'),dict(count=5,label='5D',step='day',stepmode='backward'),dict(count=1,label='1M',step='month',stepmode='backward'),dict(step='all',label='ALL')]
@@ -38,17 +45,17 @@ if not TOKEN:st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.');st.stop()
 frame=st.sidebar.radio('TIMEFRAME',FRAMES,index=2);max_candles=1000
 n=st.sidebar.select_slider('CANDLES',options=[10,50,100,150,200,300,400,500,600,700,1000],value=300)
 st.sidebar.caption(f'{max_candles:,} candles loaded • showing {n:,}')
-show_ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);show_vwap=st.sidebar.checkbox('VWAP',True);show_sr=st.sidebar.checkbox('Support / Resistance',True);show=st.sidebar.checkbox('Candle Patterns',True)
+show_ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);show_vwap=st.sidebar.checkbox('VWAP',True);show_sr=st.sidebar.checkbox('Support / Resistance',True);show_structure=st.sidebar.checkbox('Market Structure',True);show=st.sidebar.checkbox('Candle Patterns',True)
 try:raw,source=load_for_dashboard(frame,max_candles);d=indicators(raw.tail(n),frame)
 except Exception as e:st.error(f'Market data failed: {type(e).__name__}: {e}');st.stop()
 if len(d)<2:st.info('No stored candles yet. Run the historical backfill.');st.stop()
-ps=detect_patterns(d) if show else [];d,structure=market_structure(d);score=signal_score(structure,ps);last,prev=d.iloc[-1],d.iloc[-2];chg=last.close-prev.close;pct=chg/prev.close*100;v=float(last.vwap) if np.isfinite(last.vwap) else float(last.close);bias=structure['trend'];bc='green' if bias=='BULLISH' else 'red' if bias=='BEARISH' else 'amber';(s1,s2),(r1,r2)=zones(d)
+ps=detect_patterns(d) if show else [];d,structure=market_structure(d);struct=detect_structure(d);score=signal_score(structure,ps);last,prev=d.iloc[-1],d.iloc[-2];chg=last.close-prev.close;pct=chg/prev.close*100;v=float(last.vwap) if np.isfinite(last.vwap) else float(last.close);bias=struct['trend'];bc='green' if bias=='BULLISH' else 'red' if bias=='BEARISH' else 'amber';(s1,s2),(r1,r2)=zones(d)
 st.markdown("<div class='k'>NIFTY 50 • PRICE ACTION</div><div class='title'>Nifty Vision</div>",unsafe_allow_html=True);st.markdown(f"<div class='sub'>{frame} • {last.ts.strftime('%d %b %Y %H:%M:%S %Z')} • <span class='status'>{source}</span></div>",unsafe_allow_html=True);st.divider();cols=st.columns(7)
-for c,(a,b,x) in zip(cols,[('NIFTY',f'{last.close:,.2f}',f'{chg:+.2f} ({pct:+.2f}%)'),('REGIME',bias,'EMA + VWAP + structure'),('SETUP',structure['setup'],'Market structure'),('SIGNAL',f'{score:+d} / 5','Pattern confirmation'),('RSI 14',f'{last.rsi:.1f}' if np.isfinite(last.rsi) else '—','Momentum'),('SUPPORT',f'{s1:,.0f}–{s2:,.0f}','Dynamic zone'),('RESISTANCE',f'{r1:,.0f}–{r2:,.0f}','Dynamic zone')]):c.markdown(f"<div class='card'><div class='lab'>{a}</div><div class='val {bc if a in ('REGIME','SIGNAL') else ''}'>{b}</div><div class='sub'>{x}</div></div>",unsafe_allow_html=True)
+for c,(a,b,x) in zip(cols,[('NIFTY',f'{last.close:,.2f}',f'{chg:+.2f} ({pct:+.2f}%)'),('REGIME',bias,'Market structure'),('SETUP',struct['latest'],'Structure event'),('SIGNAL',f'{score:+d} / 5','Pattern + trend'),('RSI 14',f'{last.rsi:.1f}' if np.isfinite(last.rsi) else '—','Momentum'),('SUPPORT',f'{s1:,.0f}–{s2:,.0f}','Dynamic zone'),('RESISTANCE',f'{r1:,.0f}–{r2:,.0f}','Dynamic zone')]):c.markdown(f"<div class='card'><div class='lab'>{a}</div><div class='val {bc if a in ('REGIME','SIGNAL') else ''}'>{b}</div><div class='sub'>{x}</div></div>",unsafe_allow_html=True)
 left,right=st.columns([3.8,1.2],gap='large')
-with left:st.plotly_chart(make_chart(d,ps,frame,show_ema,show_vwap,show_sr),use_container_width=True,config={'displaylogo':False,'scrollZoom':True,'doubleClick':'reset'})
+with left:st.plotly_chart(make_chart(d,ps,struct['events'],frame,show_ema,show_vwap,show_sr,show_structure),use_container_width=True,config={'displaylogo':False,'scrollZoom':True,'doubleClick':'reset'})
 with right:
- st.markdown("<div class='panel'><div class='pt'>LIVE READ</div>",unsafe_allow_html=True);st.markdown(f"<div class='val {bc}'>{bias}</div><div class='read'>Structure: <b>{structure['setup']}</b><br>Price is {'above' if last.close>v else 'below'} VWAP. EMA9 is {'above' if last.ema9>last.ema20 else 'below'} EMA20.</div><br><div class='pt'>PATTERNS</div>",unsafe_allow_html=True)
+ st.markdown("<div class='panel'><div class='pt'>MARKET STRUCTURE</div>",unsafe_allow_html=True);st.markdown(f"<div class='val {bc}'>{struct['trend']}</div><div class='read'>Latest: <b>{struct['latest']}</b><br>Confidence: <b>{struct['confidence']}</b></div><br><div class='pt'>PATTERNS</div>",unsafe_allow_html=True)
  for p in ps:
   cls='green' if p['direction']=='bullish' else 'red' if p['direction']=='bearish' else 'amber';st.markdown(f"<div class='read'><b class='{cls}'>{p['name']}</b> <span>{p['confidence']}</span><br>{p['meaning']}</div><br>",unsafe_allow_html=True)
  if not ps:st.markdown('<div class="read">No recognised patterns on screen.</div>',unsafe_allow_html=True)
