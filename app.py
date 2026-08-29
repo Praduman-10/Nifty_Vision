@@ -30,14 +30,15 @@ def zones(d):
  if rv<=price:rv=float(x.high.max())
  if sv>=price:sv=float(x.low.min())
  h=atr*.35;return(sv-h,sv+h),(rv-h,rv+h)
-def make_chart(d,ps,frame,show_ema,show_vwap,show_support,show_resistance):
+def make_chart(d,ps,frame,show_ema,show_vwap,show_sr):
  f=go.Figure(go.Candlestick(x=d.ts,open=d.open,high=d.high,low=d.low,close=d.close,name='NIFTY',increasing_line_color='#00e676',decreasing_line_color='#ff5252'))
  if show_ema:
   for c,n in [('ema9','EMA 9'),('ema20','EMA 20'),('ema50','EMA 50')]:f.add_trace(go.Scatter(x=d.ts,y=d[c],name=n,mode='lines'))
  if show_vwap:f.add_trace(go.Scatter(x=d.ts,y=d.vwap,name='VWAP',mode='lines',line=dict(width=2,dash='dot')))
  (s1,s2),(r1,r2)=zones(d)
- if show_support:f.add_hrect(y0=s1,y1=s2,fillcolor='rgba(0,230,118,.12)',line_color='#00e676',annotation_text='SUPPORT')
- if show_resistance:f.add_hrect(y0=r1,y1=r2,fillcolor='rgba(255,82,82,.12)',line_color='#ff5252',annotation_text='RESISTANCE')
+ if show_sr:
+  f.add_hrect(y0=s1,y1=s2,fillcolor='rgba(0,230,118,.12)',line_color='#00e676',annotation_text='SUPPORT')
+  f.add_hrect(y0=r1,y1=r2,fillcolor='rgba(255,82,82,.12)',line_color='#ff5252',annotation_text='RESISTANCE')
  for i,n,dr,meaning in {p[1]:p for p in ps}.values():
   row=d.iloc[i];col='#00e676' if dr=='bullish' else '#ff5252' if dr=='bearish' else '#ffc107';f.add_annotation(x=row.ts,y=row.low if dr=='bullish' else row.high,text=n,showarrow=True,arrowhead=2,ay=30 if dr=='bullish' else -30,font=dict(color=col,size=10),arrowcolor=col,bgcolor='rgba(5,5,5,.85)',bordercolor=col,borderwidth=1)
  buttons=[dict(count=1,label='1M',step='month',stepmode='backward'),dict(count=3,label='3M',step='month',stepmode='backward'),dict(count=6,label='6M',step='month',stepmode='backward'),dict(count=1,label='1Y',step='year',stepmode='backward'),dict(step='all',label='ALL')] if frame=='1 day' else [dict(count=1,label='1D',step='day',stepmode='backward'),dict(count=5,label='5D',step='day',stepmode='backward'),dict(count=1,label='1M',step='month',stepmode='backward'),dict(step='all',label='ALL')]
@@ -47,9 +48,9 @@ if not TOKEN:st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.');st.stop()
 frame=st.sidebar.selectbox('TIMEFRAME',FRAMES,index=2)
 max_candles=1000
 candle_choices=[10,50,100,150,200,300,400,500,600,700,1000]
-n=st.sidebar.select_slider('CANDLES',options=candle_choices,value=300)
+n=st.sidebar.selectbox('CANDLES',candle_choices,index=4)
 st.sidebar.caption(f'{max_candles:,} candles loaded • showing {n:,}')
-show_ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);show_vwap=st.sidebar.checkbox('VWAP',True);show_support=st.sidebar.checkbox('Support',True);show_resistance=st.sidebar.checkbox('Resistance',True);show=st.sidebar.checkbox('Candle Patterns',True)
+show_ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);show_vwap=st.sidebar.checkbox('VWAP',True);show_sr=st.sidebar.checkbox('Support / Resistance',True);show=st.sidebar.checkbox('Candle Patterns',True)
 try:raw,source=load_for_dashboard(frame,max_candles);d=indicators(raw.tail(n),frame)
 except Exception as e:st.error(f'Market data failed: {type(e).__name__}: {e}');st.stop()
 if len(d)<2:st.info('No stored candles yet. Run the historical backfill.');st.stop()
@@ -57,7 +58,7 @@ ps=patterns(d) if show else [];d,structure=market_structure(d);score=signal_scor
 st.markdown("<div class='k'>NIFTY 50 • PRICE ACTION</div><div class='title'>Nifty Vision</div>",unsafe_allow_html=True);st.markdown(f"<div class='sub'>{frame} • {last.ts.strftime('%d %b %Y %H:%M:%S %Z')} • <span class='status'>{source}</span></div>",unsafe_allow_html=True);st.divider();cols=st.columns(7)
 for c,(a,b,x) in zip(cols,[('NIFTY',f'{last.close:,.2f}',f'{chg:+.2f} ({pct:+.2f}%)'),('REGIME',bias,'EMA + VWAP + structure'),('SETUP',structure['setup'],'Market structure'),('SIGNAL',f'{score:+d} / 5','Pattern confirmation'),('RSI 14',f'{last.rsi:.1f}' if np.isfinite(last.rsi) else '—','Momentum'),('SUPPORT',f'{s1:,.0f}–{s2:,.0f}','Dynamic zone'),('RESISTANCE',f'{r1:,.0f}–{r2:,.0f}','Dynamic zone')]):c.markdown(f"<div class='card'><div class='lab'>{a}</div><div class='val {bc if a in ('REGIME','SIGNAL') else ''}'>{b}</div><div class='sub'>{x}</div></div>",unsafe_allow_html=True)
 left,right=st.columns([3.8,1.2],gap='large')
-with left:st.plotly_chart(make_chart(d,ps,frame,show_ema,show_vwap,show_support,show_resistance),use_container_width=True,config={'displaylogo':False,'scrollZoom':True})
+with left:st.plotly_chart(make_chart(d,ps,frame,show_ema,show_vwap,show_sr),use_container_width=True,config={'displaylogo':False,'scrollZoom':True})
 with right:
  st.markdown("<div class='panel'><div class='pt'>LIVE READ</div>",unsafe_allow_html=True);st.markdown(f"<div class='val {bc}'>{bias}</div><div class='read'>Structure: <b>{structure['setup']}</b><br>Price is {'above' if last.close>v else 'below'} VWAP. EMA9 is {'above' if last.ema9>last.ema20 else 'below'} EMA20.</div><br><div class='pt'>PATTERNS</div>",unsafe_allow_html=True)
  latest={p[1]:p for p in ps}
