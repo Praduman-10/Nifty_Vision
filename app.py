@@ -20,7 +20,9 @@ def patterns(d):
   if b.close>b.open and c.close<c.open and c.open>=b.close and c.close<=b.open:out.append((i,'BEARISH ENGULFING','bearish','Strong bearish reversal'))
  return out
 def zones(d):
- x=d.tail(min(120,len(d)));price=float(x.close.iloc[-1]);atr=float((x.high-x.low).rolling(14).mean().iloc[-1]);atr=max(atr,price*.001);w=max(3,min(7,len(x)//20));lo=x.low.rolling(w,center=True).min();hi=x.high.rolling(w,center=True).max();s=x.loc[x.low.eq(lo),'low'].dropna();r=x.loc[x.high.eq(hi),'high'].dropna();sv=float(s[s<=price].max()) if not s[s<=price].empty else float(x.low.min());rv=float(r[r>=price].min()) if not r[r>=price].empty else float(x.high.max());h=atr*.35;return (sv-h,sv+h),(rv-h,rv+h)
+ x=d.tail(min(120,len(d)));price=float(x.close.iloc[-1]);ranges=(x.high-x.low).rolling(14,min_periods=1).mean();atr=float(ranges.iloc[-1]);
+ if not np.isfinite(atr) or atr<=0: atr=max(float((x.high-x.low).median()),price*.001)
+ w=max(3,min(7,max(1,len(x)//20)));lo=x.low.rolling(w,center=True,min_periods=1).min();hi=x.high.rolling(w,center=True,min_periods=1).max();s=x.loc[x.low.eq(lo),'low'].dropna();r=x.loc[x.high.eq(hi),'high'].dropna();sv=float(s[s<=price].max()) if not s[s<=price].empty else float(x.low.min());rv=float(r[r>=price].min()) if not r[r>=price].empty else float(x.high.max());h=atr*.35;return (sv-h,sv+h),(rv-h,rv+h)
 def make_chart(d,ps):
  f=go.Figure(go.Candlestick(x=d.ts,open=d.open,high=d.high,low=d.low,close=d.close,name='NIFTY',increasing_line_color='#00e676',decreasing_line_color='#ff5252'))
  for c,n in [('ema9','EMA 9'),('ema20','EMA 20'),('ema50','EMA 50')]:f.add_trace(go.Scatter(x=d.ts,y=d[c],name=n,mode='lines'))
