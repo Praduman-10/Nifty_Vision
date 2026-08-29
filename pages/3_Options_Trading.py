@@ -1,4 +1,5 @@
 import os
+from datetime import date
 import numpy as np
 import pandas as pd
 import requests
@@ -18,45 +19,86 @@ st.markdown('''<style>
 
 def api_get(path, params):
     r = requests.get('https://api.upstox.com/v2' + path, params=params, headers={'Accept':'application/json','Authorization':f'Bearer {TOKEN}'}, timeout=20)
-    r.raise_for_status(); body = r.json()
-    if body.get('status') != 'success': raise RuntimeError(body.get('errors') or 'Upstox API returned an error')
-    return body.get('data', [])
+    try:
+        body = r.json()
+    except Exception:
+        body = {}
+    if r.status_code >= 400:
+        detail = body.get('errors') or body.get('message') or r.text[:300]
+        raise RuntimeError(f'HTTP {r.status_code}: {detail}')
+    if body.get('status') != 'success':
+        raise RuntimeError(body.get('errors') or body.get('message') or 'Upstox API returned an error')
+    data = body.get('data', [])
+    return data
+
+def as_rows(data):
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ('data','items','results'):
+            if isinstance(data.get(key), list):
+                return data[key]
+    return []
+
+def resolve_expiry(keyword):
+    """Resolve a relative expiry to a real YYYY-MM-DD date when the chain endpoint returns no rows."""
+    rows = as_rows(api_get('/option/contract', {'instrument_key': UNDERLYING}))
+    dates = sorted({str(x.get('expiry')) for x in rows if x.get('expiry')})
+    today = date.today().isoformat()
+    dates = [d for d in dates if d >= today]
+    if not dates:
+        raise RuntimeError('Upstox returned no future NIFTY option expiries.')
+    if keyword == 'current_week':
+        return dates[0]
+    if keyword == 'next_week':
+        return dates[1] if len(dates) > 1 else dates[0]
+    if keyword == 'current_month':
+        ym = dates[0][:7]
+        same = [d for d in dates if d[:7] == ym]
+        return same[-1] if same else dates[0]
+    if keyword == 'next_month':
+        ym = dates[0][:7]
+        months = sorted({d[:7] for d in dates if d[:7] > ym})
+        if months:
+            return [d for d in dates if d[:7] == months[0]][-1]
+        return dates[-1]
+    return keyword
 
 def load_chain(expiry):
-    return api_get('/option/chain', {'instrument_key': UNDERLYING, 'expiry_date': expiry})
+    rows = as_rows(api_get('/option/chain', {'instrument_key': UNDERLYING, 'expiry_date': expiry}))
+    if rows:
+        return rows, expiry
+    # Some sessions can return an empty chain for a relative keyword after an expiry rollover.
+    # Resolve it to the actual active contract date and retry once.
+    actual = resolve_expiry(expiry) if expiry in EXPIRIES else expiry
+    rows = as_rows(api_get('/option/chain', {'instrument_key': UNDERLYING, 'expiry_date': actual}))
+    if not rows:
+        raise RuntimeError(f'No NIFTY option-chain rows returned for {actual}.')
+    return rows, actual
 
 def flatten(rows):
     out=[]
     for x in rows:
-        c=x.get('call_options',{}); p=x.get('put_options',{}); cm=c.get('market_data',{}); pm=p.get('market_data',{}); cg=c.get('option_greeks',{}); pg=p.get('option_greeks',{})
-        out.append({'strike':float(x.get('strike_price',0)),'expiry':x.get('expiry'),'spot':float(x.get('underlying_spot_price',0)),'call_ltp':cm.get('ltp'),'call_oi':cm.get('oi',0),'call_prev_oi':cm.get('prev_oi',0),'call_vol':cm.get('volume',0),'call_bid':cm.get('bid_price'),'call_ask':cm.get('ask_price'),'call_iv':cg.get('iv'),'call_delta':cg.get('delta'),'put_ltp':pm.get('ltp'),'put_oi':pm.get('oi',0),'put_prev_oi':pm.get('prev_oi',0),'put_vol':pm.get('volume',0),'put_bid':pm.get('bid_price'),'put_ask':pm.get('ask_price'),'put_iv':pg.get('iv'),'put_delta':pg.get('delta')})
+        if not isinstance(x, dict) or x.get('strike_price') is None:
+            continue
+        c=x.get('call_options') or {}; p=x.get('put_options') or {}
+        cm=c.get('market_data') or {}; pm=p.get('market_data') or {}
+        cg=c.get('option_greeks') or {}; pg=p.get('option_greeks') or {}
+        out.append({'strike':float(x.get('strike_price')),'expiry':x.get('expiry'),'spot':float(x.get('underlying_spot_price',np.nan)),'call_ltp':cm.get('ltp'),'call_oi':cm.get('oi',0),'call_prev_oi':cm.get('prev_oi',0),'call_vol':cm.get('volume',0),'call_bid':cm.get('bid_price'),'call_ask':cm.get('ask_price'),'call_iv':cg.get('iv'),'call_delta':cg.get('delta'),'put_ltp':pm.get('ltp'),'put_oi':pm.get('oi',0),'put_prev_oi':pm.get('prev_oi',0),'put_vol':pm.get('volume',0),'put_bid':pm.get('bid_price'),'put_ask':pm.get('ask_price'),'put_iv':pg.get('iv'),'put_delta':pg.get('delta')})
+    if not out:
+        raise RuntimeError('Upstox returned option-chain data, but no rows contained strike_price.')
     return pd.DataFrame(out).sort_values('strike').reset_index(drop=True)
 
 def max_pain(df):
-    strikes=df.strike.values; call_oi=df.call_oi.fillna(0).values; put_oi=df.put_oi.fillna(0).values; pain=[]
-    for s in strikes: pain.append(float(np.sum(np.maximum(s-strikes,0)*call_oi)+np.sum(np.maximum(strikes-s,0)*put_oi)))
+    strikes=df.strike.values; call_oi=df.call_oi.fillna(0).values; put_oi=df.put_oi.fillna(0).values
+    pain=[float(np.sum(np.maximum(s-strikes,0)*call_oi)+np.sum(np.maximum(strikes-s,0)*put_oi)) for s in strikes]
     return float(strikes[int(np.argmin(pain))]) if len(strikes) else np.nan
-
-def buildup(price, oi, prev_oi):
-    if pd.isna(price) or pd.isna(oi) or pd.isna(prev_oi) or prev_oi==0: return 'N/A'
-    dp=price-float(price if False else 0)
-    doi=oi-prev_oi
-    return 'N/A' if not np.isfinite(doi) else ('LONG BUILD-UP' if doi>0 and price>0 else 'SHORT BUILD-UP')
-
-def classify(price, ref_price, oi, prev_oi):
-    if any(pd.isna(x) for x in [price,ref_price,oi,prev_oi]) or prev_oi==0: return 'N/A'
-    dp=float(price)-float(ref_price); doi=float(oi)-float(prev_oi)
-    if dp>0 and doi>0:return 'LONG BUILD-UP'
-    if dp<0 and doi>0:return 'SHORT BUILD-UP'
-    if dp>0 and doi<0:return 'SHORT COVERING'
-    if dp<0 and doi<0:return 'LONG UNWINDING'
-    return 'FLAT'
 
 def fmt(v): return '—' if pd.isna(v) else f'{v:,.0f}'
 
 st_autorefresh(interval=30000, key='options_refresh')
 st.markdown('<div class="kicker">NIFTY 50 • DERIVATIVES</div><div class="title">Options Trading</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub">Live option chain • OI intelligence • IV • Greeks • support / resistance • buildup classification</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub">Live option chain • OI intelligence • IV • Greeks • support / resistance • OI flow</div>', unsafe_allow_html=True)
 st.divider()
 if not TOKEN: st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.'); st.stop()
 
@@ -64,27 +106,23 @@ c1,c2,c3=st.columns([1.1,1.1,2.8])
 with c1: expiry=st.selectbox('EXPIRY', EXPIRIES, index=0)
 with c2: window=st.select_slider('STRIKES AROUND ATM', options=[5,7,10,15,20], value=10)
 with c3: st.caption('Data source: Upstox Option Chain API • refreshes every 30 seconds')
-try: df=flatten(load_chain(expiry))
-except Exception as e: st.error(f'Option chain failed: {type(e).__name__}: {e}'); st.stop()
-if df.empty: st.warning('No option-chain data returned for this expiry.'); st.stop()
+try:
+    rows,actual_expiry=load_chain(expiry)
+    df=flatten(rows)
+except Exception as e:
+    st.error(f'Option chain failed: {type(e).__name__}: {e}')
+    st.info('The page now retries relative expiries using the active NIFTY expiry date when Upstox returns an empty chain.')
+    st.stop()
+if df.empty or 'strike' not in df.columns:
+    st.warning('No option-chain data returned for this expiry.'); st.stop()
+st.markdown(f'<span class="status">EXPIRY {actual_expiry}</span>', unsafe_allow_html=True)
 
 spot=float(df.spot.dropna().iloc[0]); atm_idx=int((df.strike-spot).abs().idxmin()); atm=float(df.loc[atm_idx,'strike']); lo=max(0,atm_idx-window); hi=min(len(df),atm_idx+window+1); view=df.iloc[lo:hi].copy()
 total_ce=view.call_oi.fillna(0).sum(); total_pe=view.put_oi.fillna(0).sum(); pcr=(total_pe/total_ce) if total_ce else np.nan; mp=max_pain(df)
 ce_res=view.loc[view.strike>=spot].sort_values('call_oi',ascending=False).head(1); pe_sup=view.loc[view.strike<=spot].sort_values('put_oi',ascending=False).head(1); ce_wall=float(ce_res.strike.iloc[0]) if not ce_res.empty else np.nan; pe_wall=float(pe_sup.strike.iloc[0]) if not pe_sup.empty else np.nan
 ce_chg=(view.call_oi.fillna(0)-view.call_prev_oi.fillna(0)).sum(); pe_chg=(view.put_oi.fillna(0)-view.put_prev_oi.fillna(0)).sum(); flow='CALL WRITING' if ce_chg>pe_chg*1.2 else 'PUT WRITING' if pe_chg>ce_chg*1.2 else 'BALANCED'; flow_cls='red' if flow=='CALL WRITING' else 'green' if flow=='PUT WRITING' else 'amber'
-
-# Infer option setup from several independent chain signals; keep neutral when evidence conflicts.
-pcr_score=1 if pcr>=1.05 else -1 if pcr<=0.85 else 0
-flow_score=-1 if flow=='CALL WRITING' else 1 if flow=='PUT WRITING' else 0
-wall_score=1 if np.isfinite(pe_wall) and spot-pe_wall < (ce_wall-spot if np.isfinite(ce_wall) else 1e9) else -1 if np.isfinite(ce_wall) else 0
-setup_score=pcr_score+flow_score+wall_score
-setup='BULLISH' if setup_score>=2 else 'BEARISH' if setup_score<=-2 else 'NEUTRAL'; setup_cls='bull' if setup=='BULLISH' else 'bear' if setup=='BEARISH' else ''; setup_color='green' if setup=='BULLISH' else 'red' if setup=='BEARISH' else 'amber'
-
-# Classify each strike using current LTP versus a neutral reference implied by previous OI snapshot.
-# OI classification is conservative when a clean prior price is unavailable.
+pcr_score=1 if pcr>=1.05 else -1 if pcr<=0.85 else 0; flow_score=-1 if flow=='CALL WRITING' else 1 if flow=='PUT WRITING' else 0; wall_score=1 if np.isfinite(pe_wall) and spot-pe_wall < (ce_wall-spot if np.isfinite(ce_wall) else 1e9) else -1 if np.isfinite(ce_wall) else 0; setup_score=pcr_score+flow_score+wall_score; setup='BULLISH' if setup_score>=2 else 'BEARISH' if setup_score<=-2 else 'NEUTRAL'; setup_cls='bull' if setup=='BULLISH' else 'bear' if setup=='BEARISH' else ''; setup_color='green' if setup=='BULLISH' else 'red' if setup=='BEARISH' else 'amber'
 view['CE ΔOI']=view.call_oi.fillna(0)-view.call_prev_oi.fillna(0); view['PE ΔOI']=view.put_oi.fillna(0)-view.put_prev_oi.fillna(0)
-view['CE FLOW']=np.where(view['CE ΔOI']>0,'OI ADD',np.where(view['CE ΔOI']<0,'OI UNWIND','FLAT'))
-view['PE FLOW']=np.where(view['PE ΔOI']>0,'OI ADD',np.where(view['PE ΔOI']<0,'OI UNWIND','FLAT'))
 
 cols=st.columns(7)
 for c,(a,b,note,cl) in zip(cols,[('NIFTY',f'{spot:,.2f}','Spot',''),('ATM',f'{atm:,.0f}','Nearest strike',''),('PCR',f'{pcr:.2f}' if np.isfinite(pcr) else '—','Visible-window OI',''),('MAX PAIN',f'{mp:,.0f}' if np.isfinite(mp) else '—','Full chain',''),('CALL WALL',fmt(ce_wall),'Highest CE OI above spot','red'),('PUT WALL',fmt(pe_wall),'Highest PE OI below spot','green'),('FLOW',flow,'OI change comparison',flow_cls)]): c.markdown(f"<div class='card'><div class='lab'>{a}</div><div class='val {cl}'>{b}</div><div class='note'>{note}</div></div>",unsafe_allow_html=True)
@@ -108,11 +146,3 @@ with right:
 st.markdown('<div class="panel"><div class="section"><div class="pt">OI MAP • LIQUIDITY STRUCTURE</div></div>',unsafe_allow_html=True)
 chart=pd.DataFrame({'strike':view.strike,'CE OI':view.call_oi.fillna(0),'PE OI':-view.put_oi.fillna(0)}); fig=go.Figure(); fig.add_trace(go.Bar(x=chart.strike,y=chart['CE OI'],name='CE OI')); fig.add_trace(go.Bar(x=chart.strike,y=chart['PE OI'],name='PE OI')); fig.add_vline(x=spot,line_dash='dash',annotation_text=f'SPOT {spot:,.0f}'); fig.update_layout(height=390,barmode='relative',template='plotly_dark',paper_bgcolor='#080a0b',plot_bgcolor='#080a0b',margin=dict(l=10,r=10,t=10,b=10),xaxis_title='Strike',yaxis_title='Open Interest',legend=dict(orientation='h')); st.plotly_chart(fig,use_container_width=True)
 st.markdown('</div>',unsafe_allow_html=True)
-
-# OI flow heatmap-style summary: focus attention on the strikes with the largest changes.
-st.markdown('<div class="panel"><div class="section"><div class="pt">STRIKE-WISE OI FLOW</div></div>',unsafe_allow_html=True)
-flow_view=view[['strike','CE ΔOI','PE ΔOI','CE FLOW','PE FLOW']].copy().sort_values('strike')
-flow_view.columns=['STRIKE','CE ΔOI','PE ΔOI','CE FLOW','PE FLOW']
-st.dataframe(flow_view,use_container_width=True,hide_index=True,height=330,column_config={'STRIKE':st.column_config.NumberColumn(format='%d'),'CE ΔOI':st.column_config.NumberColumn(format='%+,d'),'PE ΔOI':st.column_config.NumberColumn(format='%+,d')})
-st.markdown('</div>',unsafe_allow_html=True)
-st.caption('Options setup is a rule-based analytical view, not a guaranteed trade call. OI support/resistance and buildup signals can change rapidly with new chain data.')
