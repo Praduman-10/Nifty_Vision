@@ -36,9 +36,13 @@ def get_market_data(label, limit=500):
     cached=load_candles(KEY,key,limit)
     latest=latest_timestamp(KEY,key)
     end=_last_market_date(date.today())
-    initial_lookback=365 if label=='1 day' else 7
     try:
-        start=pd.Timestamp(latest).date() if latest else end-timedelta(days=initial_lookback)
+        # Daily candles are cheap and have a much larger API range, so seed/fill
+        # the full recent year even if a few daily rows already exist.
+        if label=='1 day':
+            start=end-timedelta(days=365)
+        else:
+            start=pd.Timestamp(latest).date() if latest else end-timedelta(days=7)
         fresh=_fetch(unit,interval,start,end)
         if not fresh.empty:
             upsert_candles(fresh,KEY,key)
