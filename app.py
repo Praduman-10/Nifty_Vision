@@ -36,8 +36,7 @@ def detect_patterns(d):
   if b.close>b.open and c.close<c.open and c.open>b.close and c.close<(b.open+b.close)/2 and c.close>b.open:names.append('DARK CLOUD')
   if b.close<b.open and c.close>c.open and c.open>b.close and c.close<b.open:names.append('BULLISH HARAMI')
   if b.close>b.open and c.close<c.open and c.open<b.close and c.close>b.open:names.append('BEARISH HARAMI')
-  for n in names:
-   meaning,direction=PATTERN_INFO[n];out.append({'i':i,'name':n,'meaning':meaning,'direction':direction})
+  for n in names:meaning,direction=PATTERN_INFO[n];out.append({'i':i,'name':n,'meaning':meaning,'direction':direction})
  return out
 def latest_unique_patterns(ps):
  latest={}
@@ -45,27 +44,36 @@ def latest_unique_patterns(ps):
  return sorted(latest.values(),key=lambda p:p['i'])
 def pattern_color(direction):return '#00e676' if direction=='bullish' else '#ff5252' if direction=='bearish' else '#ffc107'
 def pattern_class(direction):return 'green' if direction=='bullish' else 'red' if direction=='bearish' else 'amber'
-def levels(d):x=d.tail(40);return float(x.low.min()),float(x.high.max())
+def sr_zones(d):
+ x=d.tail(min(len(d),120));price=float(x.close.iloc[-1]);atr=float((x.high-x.low).rolling(14).mean().iloc[-1]);atr=max(atr,price*0.001);window=max(3,min(7,len(x)//20));lows=x.low.rolling(window,center=True).min();highs=x.high.rolling(window,center=True).max();supports=x.loc[x.low.eq(lows),'low'].dropna();resists=x.loc[x.high.eq(highs),'high'].dropna()
+ def cluster(vals):
+  vals=sorted(float(v) for v in vals if np.isfinite(v));groups=[]
+  for v in vals:
+   if not groups or v-groups[-1][-1]>atr*.35:groups.append([v])
+   else:groups[-1].append(v)
+  return [(float(np.mean(g)),len(g)) for g in groups]
+ sc=cluster(supports);rc=cluster(resists);sc=[z for z in sc if z[0]<=price];rc=[z for z in rc if z[0]>=price]
+ support=max(sc,key=lambda z:(z[1],z[0])) if sc else (float(x.low.min()),1);resistance=max(rc,key=lambda z:(z[1],-z[0])) if rc else (float(x.high.max()),1);half=atr*.35
+ return (support[0]-half,support[0]+half,support[1]),(resistance[0]-half,resistance[0]+half,resistance[1])
 def chart(d,ema,vwap,sr,show_patterns,ps):
  f=go.Figure(go.Candlestick(x=d.ts,open=d.open,high=d.high,low=d.low,close=d.close,name='NIFTY',increasing_line_color='#00e676',decreasing_line_color='#ff5252'))
  if ema:
   for c,n in [('ema9','EMA 9'),('ema20','EMA 20'),('ema50','EMA 50')]:f.add_trace(go.Scatter(x=d.ts,y=d[c],name=n,mode='lines',line=dict(width=1.3)))
  if vwap:f.add_trace(go.Scatter(x=d.ts,y=d.vwap,name=d.vwap_mode.iloc[-1],mode='lines',line=dict(width=2.5,dash='dot')))
  if sr:
-  s,r=levels(d);f.add_hline(y=s,line_dash='dot',annotation_text=f'Support {s:,.0f}');f.add_hline(y=r,line_dash='dot',annotation_text=f'Resistance {r:,.0f}')
+  (s1,s2,sc),(r1,r2,rc)=sr_zones(d);f.add_hrect(y0=s1,y1=s2,fillcolor='rgba(0,230,118,.12)',line_width=1,line_color='#00e676',annotation_text=f'SUPPORT ZONE • {sc} TESTS');f.add_hrect(y0=r1,y1=r2,fillcolor='rgba(255,82,82,.12)',line_width=1,line_color='#ff5252',annotation_text=f'RESISTANCE ZONE • {rc} TESTS')
  if show_patterns:
-  # Only the latest visible occurrence of each pattern type gets a label.
   for p in latest_unique_patterns(ps):
    row=d.iloc[p['i']];above=p['direction']!='bullish';col=pattern_color(p['direction']);f.add_annotation(x=row.ts,y=row.high if above else row.low,text=p['name'],showarrow=True,arrowhead=2,ay=-30 if above else 30,font=dict(size=10,color=col),arrowcolor=col,bgcolor='rgba(5,5,5,.82)',bordercolor=col,borderwidth=1,borderpad=3)
  f.update_layout(height=650,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',xaxis_rangeslider_visible=False,margin=dict(l=10,r=10,t=20,b=10),hovermode='x unified');f.update_xaxes(showgrid=False);f.update_yaxes(side='right',gridcolor='#171717');return f
-st_autorefresh(interval=30000,key='nv_refresh');st.sidebar.markdown('**NIFTY VISION**\n\n')
+st_autorefresh(interval=30000,key='nv_refresh');st.sidebar.markdown('**NIFTY VISION**')
 if not TOKEN:st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.');st.stop()
-frame=st.sidebar.selectbox('TIMEFRAME',list(FRAMES),index=2);unit,interval=FRAMES[frame];n=st.sidebar.slider('CANDLES',50,500,180,10);ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);vwap=st.sidebar.checkbox('VWAP',True);sr=st.sidebar.checkbox('Support / Resistance',True);show_patterns=st.sidebar.checkbox('Candle Patterns',True)
+frame=st.sidebar.selectbox('TIMEFRAME',list(FRAMES),index=2);unit,interval=FRAMES[frame];n=st.sidebar.slider('CANDLES',50,500,180,10);ema=st.sidebar.checkbox('EMA 9 / 20 / 50',True);vwap=st.sidebar.checkbox('VWAP',True);sr=st.sidebar.checkbox('Support / Resistance Zones',True);show_patterns=st.sidebar.checkbox('Candle Patterns',True)
 try:raw,mode=candles(unit,interval);d=add_indicators(raw.tail(n))
 except Exception as e:st.error(f'Upstox feed failed: {type(e).__name__}: {e}');st.stop()
 if len(d)<2:st.error('Not enough candles returned.');st.stop()
-ps=detect_patterns(d);unique_patterns=latest_unique_patterns(ps);last,prev=d.iloc[-1],d.iloc[-2];chg=last.close-prev.close;pct=chg/prev.close*100;s,r=levels(d);bias='BULLISH' if last.close>last.ema20 and last.ema9>last.ema20 and last.close>last.vwap else ('BEARISH' if last.close<last.ema20 and last.ema9<last.ema20 and last.close<last.vwap else 'MIXED');bc='green' if bias=='BULLISH' else ('red' if bias=='BEARISH' else 'amber')
-st.markdown("<div class='k'>NIFTY 50 • LIVE PRICE ACTION</div><div class='title'>Nifty Vision</div>",unsafe_allow_html=True);st.markdown(f"<div class='sub'>Upstox • {frame} candles • {last.ts.strftime('%d %b %Y %H:%M:%S %Z')} &nbsp; <span class='status'>{mode}</span> <span class='status'>{d.vwap_mode.iloc[-1]}</span></div>",unsafe_allow_html=True);st.divider();cols=st.columns(5);items=[('NIFTY',f'{last.close:,.2f}',f'{chg:+.2f} ({pct:+.2f}%)'),('BIAS',bias,'EMA + VWAP composite'),('RSI 14',f'{last.rsi:.1f}','Momentum'),('SUPPORT',f'{s:,.0f}','Recent range low'),('RESISTANCE',f'{r:,.0f}','Recent range high')]
+ps=detect_patterns(d);unique_patterns=latest_unique_patterns(ps);(s1,s2,sc),(r1,r2,rc)=sr_zones(d);last,prev=d.iloc[-1],d.iloc[-2];chg=last.close-prev.close;pct=chg/prev.close*100;bias='BULLISH' if last.close>last.ema20 and last.ema9>last.ema20 and last.close>last.vwap else ('BEARISH' if last.close<last.ema20 and last.ema9<last.ema20 and last.close<last.vwap else 'MIXED');bc='green' if bias=='BULLISH' else ('red' if bias=='BEARISH' else 'amber')
+st.markdown("<div class='k'>NIFTY 50 • PRICE ACTION</div><div class='title'>Nifty Vision</div>",unsafe_allow_html=True);st.markdown(f"<div class='sub'>Upstox • {frame} candles • {last.ts.strftime('%d %b %Y %H:%M:%S %Z')} &nbsp; <span class='status'>{mode}</span> <span class='status'>{d.vwap_mode.iloc[-1]}</span></div>",unsafe_allow_html=True);st.divider();cols=st.columns(5);items=[('NIFTY',f'{last.close:,.2f}',f'{chg:+.2f} ({pct:+.2f}%)'),('BIAS',bias,'EMA + VWAP composite'),('RSI 14',f'{last.rsi:.1f}','Momentum'),('SUPPORT ZONE',f'{s1:,.0f}–{s2:,.0f}',f'{sc} swing tests'),('RESISTANCE ZONE',f'{r1:,.0f}–{r2:,.0f}',f'{rc} swing tests')]
 for c,(a,b,x) in zip(cols,items):c.markdown(f"<div class='card'><div class='lab'>{a}</div><div class='val {bc if a=='BIAS' else ''}'>{b}</div><div class='sub'>{x}</div></div>",unsafe_allow_html=True)
 left,right=st.columns([3.8,1.2],gap='large')
 with left:
@@ -76,5 +84,6 @@ with right:
   for p in unique_patterns:
    cls=pattern_class(p['direction']);st.markdown(f"<div class='read'><b class='{cls}'>{p['name']}</b><br>{p['meaning']}</div><br>",unsafe_allow_html=True)
  else:st.markdown('<div class="read">No recognised candle patterns in the visible chart.</div>',unsafe_allow_html=True)
+ st.markdown(f"<br><div class='pt'>KEY ZONES</div><div class='read'><b class='green'>Support</b> {s1:,.0f}–{s2:,.0f} · {sc} swing tests.<br><b class='red'>Resistance</b> {r1:,.0f}–{r2:,.0f} · {rc} swing tests.</div>",unsafe_allow_html=True)
  rv=float(last.rsi);state='Overbought' if rv>=70 else 'Oversold' if rv<=30 else 'Neutral';st.markdown(f"<br><div class='pt'>MOMENTUM</div><div class='read'>RSI <b>{rv:.1f}</b> — {state}.<br>EMA9 is {'above' if last.ema9>last.ema20 else 'below'} EMA20.<br>Close is {'above' if last.close>last.vwap else 'below'} VWAP.</div></div>",unsafe_allow_html=True)
 st.caption('Decision-support prototype only; rule-based signals are not investment advice.')
