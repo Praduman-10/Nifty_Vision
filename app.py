@@ -16,9 +16,10 @@ def candles(unit,interval):
  r=requests.get(f'https://api.upstox.com/v3/historical-candle/intraday/{KEY}/{unit}/{interval}',headers=headers(),timeout=20);r.raise_for_status();rows=r.json().get('data',{}).get('candles',[])
  if rows:return parse_candles(rows),'LIVE INTRADAY'
  to=date.today();back=28 if unit=='minutes' and interval<=15 else 80;fr=to-timedelta(days=back);r=requests.get(f'https://api.upstox.com/v3/historical-candle/{KEY}/{unit}/{interval}/{to:%Y-%m-%d}/{fr:%Y-%m-%d}',headers=headers(),timeout=20);r.raise_for_status();rows=r.json().get('data',{}).get('candles',[])
- if not rows:raise RuntimeError('Upstox returned no candles.');return parse_candles(rows),'LATEST HISTORICAL SESSION'
+ if not rows:raise RuntimeError('Upstox returned no candles.')
+ return parse_candles(rows),'LATEST HISTORICAL SESSION'
 def add_indicators(d):
- d=d.copy();d['ema9']=d.close.ewm(span=9,adjust=False).mean();d['ema20']=d.close.ewm(span=20,adjust=False).mean();d['ema50']=d.close.ewm(span=50,adjust=False).mean();d['session']=d.ts.dt.date;tp=(d.high+d.low+d.close)/3;vol=pd.to_numeric(d.volume,errors='coerce').fillna(0);pv=tp*vol;cv=pv.groupby(d.session).cumsum();vv=vol.groupby(d.session).cumsum();
+ d=d.copy();d['ema9']=d.close.ewm(span=9,adjust=False).mean();d['ema20']=d.close.ewm(span=20,adjust=False).mean();d['ema50']=d.close.ewm(span=50,adjust=False).mean();d['session']=d.ts.dt.date;tp=(d.high+d.low+d.close)/3;vol=pd.to_numeric(d.volume,errors='coerce').fillna(0);pv=tp*vol;cv=pv.groupby(d.session).cumsum();vv=vol.groupby(d.session).cumsum()
  if float(vol.sum())>0:d['vwap']=cv.div(vv.replace(0,np.nan));d['vwap_mode']='VWAP'
  else:d['vwap']=tp.groupby(d.session).expanding().mean().reset_index(level=0,drop=True).sort_index();d['vwap_mode']='VWAP PRICE PROXY'
  delta=d.close.diff();gain=delta.clip(lower=0).ewm(alpha=1/14,adjust=False).mean();loss=(-delta.clip(upper=0)).ewm(alpha=1/14,adjust=False).mean();d['rsi']=100-100/(1+gain/loss.replace(0,np.nan));return d
@@ -26,8 +27,7 @@ PATTERN_MEANINGS={'DOJI':'Indecision; buyers and sellers are balanced.','HAMMER'
 def detect_patterns(d):
  out=[]
  for i in range(1,len(d)):
-  b,c=d.iloc[i-1],d.iloc[i];body=abs(c.close-c.open);rng=max(c.high-c.low,1e-9);lower=min(c.open,c.close)-c.low;upper=c.high-max(c.open,c.close)
-  names=[]
+  b,c=d.iloc[i-1],d.iloc[i];body=abs(c.close-c.open);rng=max(c.high-c.low,1e-9);lower=min(c.open,c.close)-c.low;upper=c.high-max(c.open,c.close);names=[]
   if body/rng<.15:names.append('DOJI')
   if lower>=max(body*2,1e-9) and upper<=max(body*.8,1e-9):names.append('HAMMER')
   if upper>=max(body*2,1e-9) and lower<=max(body*.8,1e-9):names.append('SHOOTING STAR')
@@ -48,10 +48,8 @@ def chart(d,ema,vwap,sr,show_patterns):
  if sr:
   s,r=levels(d);f.add_hline(y=s,line_dash='dot',annotation_text=f'Support {s:,.0f}');f.add_hline(y=r,line_dash='dot',annotation_text=f'Resistance {r:,.0f}')
  if show_patterns:
-  ps=detect_patterns(d)
-  for p in ps:
-   row=d.iloc[p['i']];y=row.high if p['name'] in ['SHOOTING STAR','DOJI','BEARISH ENGULFING','DARK CLOUD','BEARISH HARAMI'] else row.low
-   f.add_annotation(x=row.ts,y=y,text=p['name'],showarrow=True,arrowhead=2,ay=-28 if y==row.high else 28,font=dict(size=9))
+  for p in detect_patterns(d):
+   row=d.iloc[p['i']];above=p['name'] in ['SHOOTING STAR','DOJI','BEARISH ENGULFING','DARK CLOUD','BEARISH HARAMI'];f.add_annotation(x=row.ts,y=row.high if above else row.low,text=p['name'],showarrow=True,arrowhead=2,ay=-28 if above else 28,font=dict(size=9))
  f.update_layout(height=650,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',xaxis_rangeslider_visible=False,margin=dict(l=10,r=10,t=20,b=10),hovermode='x unified');f.update_xaxes(showgrid=False);f.update_yaxes(side='right',gridcolor='#171717');return f
 st_autorefresh(interval=30000,key='nv_refresh');st.sidebar.markdown('**NIFTY VISION**\n\nLIVE MARKET INTELLIGENCE')
 if not TOKEN:st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.');st.stop()
