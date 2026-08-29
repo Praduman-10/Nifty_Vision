@@ -22,7 +22,7 @@ def add_indicators(d):
  if float(vol.sum())>0:d['vwap']=cv.div(vv.replace(0,np.nan));d['vwap_mode']='VWAP'
  else:d['vwap']=tp.groupby(d.session).expanding().mean().reset_index(level=0,drop=True).sort_index();d['vwap_mode']='VWAP PRICE PROXY'
  delta=d.close.diff();gain=delta.clip(lower=0).ewm(alpha=1/14,adjust=False).mean();loss=(-delta.clip(upper=0)).ewm(alpha=1/14,adjust=False).mean();d['rsi']=100-100/(1+gain/loss.replace(0,np.nan));return d
-PATTERN_MEANINGS={'DOJI':'Indecision; buyers and sellers are balanced.','HAMMER':'Bullish rejection of lower prices.','SHOOTING STAR':'Bearish rejection of higher prices.','BULLISH ENGULFING':'Strong bullish reversal signal.','BEARISH ENGULFING':'Strong bearish reversal signal.','PIERCING':'Bullish reversal after a decline.','DARK CLOUD':'Bearish reversal after an advance.','BULLISH HARAMI':'Potential bullish reversal / slowing selling.','BEARISH HARAMI':'Potential bearish reversal / slowing buying.'}
+PATTERN_INFO={'DOJI':('Indecision; buyers and sellers are balanced.','neutral'),'HAMMER':('Bullish rejection of lower prices.','bullish'),'SHOOTING STAR':('Bearish rejection of higher prices.','bearish'),'BULLISH ENGULFING':('Strong bullish reversal signal.','bullish'),'BEARISH ENGULFING':('Strong bearish reversal signal.','bearish'),'PIERCING':('Bullish reversal after a decline.','bullish'),'DARK CLOUD':('Bearish reversal after an advance.','bearish'),'BULLISH HARAMI':('Potential bullish reversal / slowing selling.','bullish'),'BEARISH HARAMI':('Potential bearish reversal / slowing buying.','bearish')}
 def detect_patterns(d):
  out=[]
  for i in range(1,len(d)):
@@ -36,10 +36,17 @@ def detect_patterns(d):
   if b.close>b.open and c.close<c.open and c.open>b.close and c.close<(b.open+b.close)/2 and c.close>b.open:names.append('DARK CLOUD')
   if b.close<b.open and c.close>c.open and c.open>b.close and c.close<b.open:names.append('BULLISH HARAMI')
   if b.close>b.open and c.close<c.open and c.open<b.close and c.close>b.open:names.append('BEARISH HARAMI')
-  for n in names:out.append({'i':i,'name':n,'meaning':PATTERN_MEANINGS[n]})
+  for n in names:
+   meaning,direction=PATTERN_INFO[n];out.append({'i':i,'name':n,'meaning':meaning,'direction':direction})
  return out
+def latest_unique_patterns(ps):
+ latest={}
+ for p in ps:latest[p['name']]=p
+ return sorted(latest.values(),key=lambda p:p['i'])
+def pattern_color(direction):return '#00e676' if direction=='bullish' else '#ff5252' if direction=='bearish' else '#ffc107'
+def pattern_class(direction):return 'green' if direction=='bullish' else 'red' if direction=='bearish' else 'amber'
 def levels(d):x=d.tail(40);return float(x.low.min()),float(x.high.max())
-def chart(d,ema,vwap,sr,show_patterns):
+def chart(d,ema,vwap,sr,show_patterns,ps):
  f=go.Figure(go.Candlestick(x=d.ts,open=d.open,high=d.high,low=d.low,close=d.close,name='NIFTY',increasing_line_color='#00e676',decreasing_line_color='#ff5252'))
  if ema:
   for c,n in [('ema9','EMA 9'),('ema20','EMA 20'),('ema50','EMA 50')]:f.add_trace(go.Scatter(x=d.ts,y=d[c],name=n,mode='lines',line=dict(width=1.3)))
@@ -47,10 +54,9 @@ def chart(d,ema,vwap,sr,show_patterns):
  if sr:
   s,r=levels(d);f.add_hline(y=s,line_dash='dot',annotation_text=f'Support {s:,.0f}');f.add_hline(y=r,line_dash='dot',annotation_text=f'Resistance {r:,.0f}')
  if show_patterns:
-  # Keep one visual label per pattern occurrence; repeated occurrences are
-  # still allowed, but never duplicate the same pattern on the same candle.
-  for p in detect_patterns(d):
-   row=d.iloc[p['i']];above=p['name'] in ['SHOOTING STAR','DOJI','BEARISH ENGULFING','DARK CLOUD','BEARISH HARAMI'];f.add_annotation(x=row.ts,y=row.high if above else row.low,text=p['name'],showarrow=True,arrowhead=2,ay=-28 if above else 28,font=dict(size=9))
+  # Only the latest visible occurrence of each pattern type gets a label.
+  for p in latest_unique_patterns(ps):
+   row=d.iloc[p['i']];above=p['direction']!='bullish';col=pattern_color(p['direction']);f.add_annotation(x=row.ts,y=row.high if above else row.low,text=p['name'],showarrow=True,arrowhead=2,ay=-30 if above else 30,font=dict(size=10,color=col),arrowcolor=col,bgcolor='rgba(5,5,5,.82)',bordercolor=col,borderwidth=1,borderpad=3)
  f.update_layout(height=650,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',xaxis_rangeslider_visible=False,margin=dict(l=10,r=10,t=20,b=10),hovermode='x unified');f.update_xaxes(showgrid=False);f.update_yaxes(side='right',gridcolor='#171717');return f
 st_autorefresh(interval=30000,key='nv_refresh');st.sidebar.markdown('**NIFTY VISION**\n\nLIVE MARKET INTELLIGENCE')
 if not TOKEN:st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.');st.stop()
@@ -58,21 +64,17 @@ frame=st.sidebar.selectbox('TIMEFRAME',list(FRAMES),index=2);unit,interval=FRAME
 try:raw,mode=candles(unit,interval);d=add_indicators(raw.tail(n))
 except Exception as e:st.error(f'Upstox feed failed: {type(e).__name__}: {e}');st.stop()
 if len(d)<2:st.error('Not enough candles returned.');st.stop()
-ps=detect_patterns(d);last,prev=d.iloc[-1],d.iloc[-2];chg=last.close-prev.close;pct=chg/prev.close*100;s,r=levels(d);bias='BULLISH' if last.close>last.ema20 and last.ema9>last.ema20 and last.close>last.vwap else ('BEARISH' if last.close<last.ema20 and last.ema9<last.ema20 and last.close<last.vwap else 'MIXED');bc='green' if bias=='BULLISH' else ('red' if bias=='BEARISH' else 'amber')
+ps=detect_patterns(d);unique_patterns=latest_unique_patterns(ps);last,prev=d.iloc[-1],d.iloc[-2];chg=last.close-prev.close;pct=chg/prev.close*100;s,r=levels(d);bias='BULLISH' if last.close>last.ema20 and last.ema9>last.ema20 and last.close>last.vwap else ('BEARISH' if last.close<last.ema20 and last.ema9<last.ema20 and last.close<last.vwap else 'MIXED');bc='green' if bias=='BULLISH' else ('red' if bias=='BEARISH' else 'amber')
 st.markdown("<div class='k'>NIFTY 50 • LIVE PRICE ACTION</div><div class='title'>Nifty Vision</div>",unsafe_allow_html=True);st.markdown(f"<div class='sub'>Upstox • {frame} candles • {last.ts.strftime('%d %b %Y %H:%M:%S %Z')} &nbsp; <span class='status'>{mode}</span> <span class='status'>{d.vwap_mode.iloc[-1]}</span></div>",unsafe_allow_html=True);st.divider();cols=st.columns(5);items=[('NIFTY',f'{last.close:,.2f}',f'{chg:+.2f} ({pct:+.2f}%)'),('BIAS',bias,'EMA + VWAP composite'),('RSI 14',f'{last.rsi:.1f}','Momentum'),('SUPPORT',f'{s:,.0f}','Recent range low'),('RESISTANCE',f'{r:,.0f}','Recent range high')]
 for c,(a,b,x) in zip(cols,items):c.markdown(f"<div class='card'><div class='lab'>{a}</div><div class='val {bc if a=='BIAS' else ''}'>{b}</div><div class='sub'>{x}</div></div>",unsafe_allow_html=True)
 left,right=st.columns([3.8,1.2],gap='large')
 with left:
- st.markdown("<div class='pt'>PRICE ACTION MAP</div>",unsafe_allow_html=True);st.plotly_chart(chart(d,ema,vwap,sr,show_patterns),use_container_width=True,config={'displaylogo':False,'scrollZoom':True});vol=go.Figure(go.Bar(x=d.ts,y=d.volume));vol.update_layout(height=140,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',margin=dict(l=10,r=10,t=0,b=0));st.plotly_chart(vol,use_container_width=True,config={'displaylogo':False})
+ st.markdown("<div class='pt'>PRICE ACTION MAP</div>",unsafe_allow_html=True);st.plotly_chart(chart(d,ema,vwap,sr,show_patterns,ps),use_container_width=True,config={'displaylogo':False,'scrollZoom':True});vol=go.Figure(go.Bar(x=d.ts,y=d.volume));vol.update_layout(height=140,template='plotly_dark',paper_bgcolor='#080808',plot_bgcolor='#080808',margin=dict(l=10,r=10,t=0,b=0));st.plotly_chart(vol,use_container_width=True,config={'displaylogo':False})
 with right:
  st.markdown("<div class='panel'><div class='pt'>LIVE READ</div>",unsafe_allow_html=True);st.markdown(f"<div class='val {bc}'>{bias}</div><div class='read'>{'Price above VWAP with EMA alignment.' if bias=='BULLISH' else 'Price below VWAP with EMA alignment.' if bias=='BEARISH' else 'Signals are mixed; wait for confirmation.'}</div><br><div class='pt'>PATTERNS</div>",unsafe_allow_html=True)
- # Right panel is unique by pattern name: each pattern is listed only once,
- # even if it occurred several times within the visible chart.
- unique_patterns=[]
- for p in ps:
-  if p['name'] not in [x['name'] for x in unique_patterns]:unique_patterns.append(p)
  if unique_patterns:
-  for p in unique_patterns:st.markdown(f"<div class='read'><b>{p['name']}</b><br>{p['meaning']}</div><br>",unsafe_allow_html=True)
+  for p in unique_patterns:
+   cls=pattern_class(p['direction']);st.markdown(f"<div class='read'><b class='{cls}'>{p['name']}</b><br>{p['meaning']}</div><br>",unsafe_allow_html=True)
  else:st.markdown('<div class="read">No recognised candle patterns in the visible chart.</div>',unsafe_allow_html=True)
  rv=float(last.rsi);state='Overbought' if rv>=70 else 'Oversold' if rv<=30 else 'Neutral';st.markdown(f"<br><div class='pt'>MOMENTUM</div><div class='read'>RSI <b>{rv:.1f}</b> — {state}.<br>EMA9 is {'above' if last.ema9>last.ema20 else 'below'} EMA20.<br>Close is {'above' if last.close>last.vwap else 'below'} VWAP.</div></div>",unsafe_allow_html=True)
 st.caption('Decision-support prototype only; rule-based signals are not investment advice.')
