@@ -37,17 +37,22 @@ def get_market_data(label, limit=500):
     latest=latest_timestamp(KEY,key)
     end=_last_market_date(date.today())
     try:
-        # Daily candles are cheap and have a much larger API range, so seed/fill
-        # the full recent year even if a few daily rows already exist.
         if label=='1 day':
             start=end-timedelta(days=365)
         else:
-            start=pd.Timestamp(latest).date() if latest else end-timedelta(days=7)
+            # Always re-fetch a small recent window so the current intraday
+            # candle is updated instead of only reading the existing SQLite row.
+            recent_start=end-timedelta(days=2)
+            if latest:
+                latest_date=pd.Timestamp(latest).date()
+                start=min(latest_date,recent_start)
+            else:
+                start=end-timedelta(days=7)
         fresh=_fetch(unit,interval,start,end)
         if not fresh.empty:
             upsert_candles(fresh,KEY,key)
         data=load_candles(KEY,key,limit)
-        return data,'SQLITE + UPSTOX'
+        return data,'LIVE UPSTOX + SQLITE'
     except Exception:
         if not cached.empty:return cached,'SQLITE CACHE'
         raise
