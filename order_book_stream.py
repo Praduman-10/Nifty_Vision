@@ -1,5 +1,4 @@
 import threading
-import time
 from typing import Any
 
 import upstox_client
@@ -71,14 +70,14 @@ class D30OrderBook:
             return
         if self.instrument_key == instrument_key:
             return
-        old = self.instrument_key
+        self.instrument_key = instrument_key
+        with self.lock:
+            self.snapshot = {}
         try:
-            if old:
-                self.streamer.unsubscribe([old])
-            self.instrument_key = instrument_key
-            self.streamer.subscribe([instrument_key], 'full_d30')
-            with self.lock:
-                self.snapshot = {}
+            if self.streamer:
+                if self.connected:
+                    self.streamer.unsubscribe([self.instrument_key])
+                self.streamer.subscribe([instrument_key], 'full_d30')
         except Exception as exc:
             self.error = str(exc)
 
