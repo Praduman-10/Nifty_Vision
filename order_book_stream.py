@@ -70,13 +70,14 @@ class D30OrderBook:
             return
         if self.instrument_key == instrument_key:
             return
+        old = self.instrument_key
         self.instrument_key = instrument_key
         with self.lock:
             self.snapshot = {}
         try:
-            if self.streamer:
-                if self.connected:
-                    self.streamer.unsubscribe([self.instrument_key])
+            if self.streamer and self.connected:
+                if old:
+                    self.streamer.unsubscribe([old])
                 self.streamer.subscribe([instrument_key], 'full_d30')
         except Exception as exc:
             self.error = str(exc)
