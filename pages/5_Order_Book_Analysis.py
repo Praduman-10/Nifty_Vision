@@ -101,9 +101,10 @@ def analyse(d, meta):
     pressure='BUY-SIDE PRESSURE' if imb >= .15 else 'SELL-SIDE PRESSURE' if imb <= -.15 else 'BALANCED'; cls='bull' if pressure.startswith('BUY') else 'bear' if pressure.startswith('SELL') else ''
     return locals()
 
-st_autorefresh(interval=10000, key='order_book_refresh')
+# Refresh the market-depth page every 5 seconds.
+st_autorefresh(interval=5000, key='order_book_refresh')
 st.markdown('<div class="kicker">NIFTY 50 • MICROSTRUCTURE</div><div class="title">Order Book Analysis</div><div class="sub">Live Upstox D5 market depth • top 5 buy and sell levels • liquidity walls • imbalance • execution pressure</div>', unsafe_allow_html=True)
-st.markdown('<span class="status">UPSTOX D5 • LIVE</span> <span class="status">UI REFRESH 10s</span>', unsafe_allow_html=True)
+st.markdown('<span class="status">UPSTOX D5 • LIVE</span> <span class="status">UI REFRESH 5s</span>', unsafe_allow_html=True)
 st.divider()
 if not TOKEN: st.error('Add UPSTOX_ACCESS_TOKEN to Streamlit Secrets.'); st.stop()
 
@@ -123,7 +124,7 @@ if not instrument_key: st.error('Upstox did not return an instrument key for the
 try: depth,meta=fetch_d5(instrument_key)
 except Exception as exc: st.error(f'Market depth failed: {type(exc).__name__}: {exc}'); st.stop()
 if depth.empty:
-    st.warning('Upstox returned no market-depth levels for this contract yet. Try another strike or wait for the next 10-second refresh.'); st.stop()
+    st.warning('Upstox returned no market-depth levels for this contract yet. Try another strike or wait for the next 5-second refresh.'); st.stop()
 
 m=analyse(depth,meta); cols=st.columns(7)
 summary=[('LTP',meta['ltp'],'Last traded price',''),('BEST BID',m['bb'],'Level 1 bid','green'),('BEST ASK',m['ba'],'Level 1 ask','red'),('SPREAD',m['spread'],'Ask − bid','amber'),('D5 IMBALANCE',m['imb']*100,'5-level bid vs ask qty','green' if m['imb']>.05 else 'red' if m['imb']<-.05 else 'amber'),('MICROPRICE',m['micro'],'Level-1 depth pressure','green' if m['micro']>m['mid'] else 'red' if m['micro']<m['mid'] else 'amber'),('OI',meta['oi'],'Open interest','')]
@@ -132,7 +133,7 @@ for c,(name,value,note,cls) in zip(cols,summary):
     c.markdown(f'<div class="card"><div class="lab">{name}</div><div class="val {cls}">{text}</div><div class="sub">{note}</div></div>',unsafe_allow_html=True)
 
 signal_color='green' if m['cls']=='bull' else 'red' if m['cls']=='bear' else 'amber'
-st.markdown(f'<div class="signal {m["cls"]}"><div class="signal-title">ORDER BOOK READ • {side} {strike:,.0f} • {actual_expiry}</div><div class="signal-main {signal_color}">{m["pressure"]}</div><div class="read">The visible top 5 levels are {m["imb"]*100:+.1f}% imbalanced. Largest bid wall: <b>{m["bw"]:,.2f}</b>. Largest ask wall: <b>{m["aw"]:,.2f}</b>. Data refreshes every 10 seconds.</div></div>',unsafe_allow_html=True)
+st.markdown(f'<div class="signal {m["cls"]}"><div class="signal-title">ORDER BOOK READ • {side} {strike:,.0f} • {actual_expiry}</div><div class="signal-main {signal_color}">{m["pressure"]}</div><div class="read">The visible top 5 levels are {m["imb"]*100:+.1f}% imbalanced. Largest bid wall: <b>{m["bw"]:,.2f}</b>. Largest ask wall: <b>{m["aw"]:,.2f}</b>. Data refreshes every 5 seconds.</div></div>',unsafe_allow_html=True)
 
 left,right=st.columns([3.4,1.6],gap='large')
 with left:
