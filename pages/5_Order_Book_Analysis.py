@@ -68,7 +68,6 @@ def option_rows(rows, side):
 
 def extract_d5(quote):
     if not isinstance(quote, dict): return pd.DataFrame(), {}
-    # V3 Full Market Quotes uses market_depth; keep fallbacks for common Upstox shapes.
     depth = quote.get('market_depth') or quote.get('marketDepth') or quote.get('depth') or {}
     bids = depth.get('buy') or depth.get('bids') or quote.get('bids') or []
     asks = depth.get('sell') or depth.get('asks') or quote.get('asks') or []
@@ -137,11 +136,11 @@ st.markdown(f'<div class="signal {m["cls"]}"><div class="signal-title">ORDER BOO
 
 left,right=st.columns([3.4,1.6],gap='large')
 with left:
-    st.markdown('<div class="panel"><div class="section"><div class="pt">5-LEVEL MARKET DEPTH • BUY + SELL</div></div>',unsafe_allow_html=True)
-    st.dataframe(depth,use_container_width=True,hide_index=True,height=360)
-    st.markdown('</div>',unsafe_allow_html=True)
     st.markdown('<div class="panel"><div class="section"><div class="pt">D5 DEPTH PROFILE</div></div>',unsafe_allow_html=True)
     fig=go.Figure(); fig.add_trace(go.Bar(x=depth['BID PRICE'],y=depth['BID QTY'],name='BIDS')); fig.add_trace(go.Bar(x=depth['ASK PRICE'],y=depth['ASK QTY'],name='ASKS')); fig.update_layout(height=420,template='plotly_dark',paper_bgcolor='#080a0b',plot_bgcolor='#080a0b',barmode='group',margin=dict(l=10,r=10,t=10,b=10),legend=dict(orientation='h')); st.plotly_chart(fig,use_container_width=True)
+    st.markdown('</div>',unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="section"><div class="pt">5-LEVEL MARKET DEPTH • BUY + SELL</div></div>',unsafe_allow_html=True)
+    st.dataframe(depth,use_container_width=True,hide_index=True,height=360)
     st.markdown('</div>',unsafe_allow_html=True)
 with right:
     st.markdown('<div class="panel"><div class="section"><div class="pt">ORDER FLOW METRICS</div></div>',unsafe_allow_html=True)
